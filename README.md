@@ -26,7 +26,7 @@ ssh -N -L 8767:127.0.0.1:8767 -p SSH_PORT USER@VM_HOST
 
 Open **http://127.0.0.1:8767/**. The root now opens the live workspace. The older two-grid recorded-data demo remains at `/index.html` and is labeled as legacy. The server binds loopback and checks the Host/Origin; keep local and remote dashboard ports identical. Do not expose the model-control API directly to the internet.
 
-The [Docker instructions](docker/README.md) describe a prebuilt environment and optional automatic Muse loading. The image-publishing workflow has not been dispatched, and container-based GPU inference remains untested.
+The [Docker instructions](docker/README.md) describe a prebuilt environment and optional automatic Muse loading. See that guide for image publication status and the exact source tag. Container-based GPU inference remains untested.
 
 ## Hardware and model support
 

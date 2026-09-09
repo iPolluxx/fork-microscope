@@ -34,3 +34,10 @@ These changes use direct position-level mixture collection: every generated obse
 - Local Python suite: 61 passing; JS math/pass suite: 5 passing. DOM interaction harness (temporary jsdom install, outside runtime dependencies) checks three-section navigation, prompt payloads, dirty prompt guard, independent passes, dynamic categories, pagination, search, completion filtering, raw text modes, literal HTML rendering and graph-to-checkpoint navigation. No browser visual inspection performed.
 - Real offline CPU run: `292a15247c414bfe96d150c9a3993c58`, pinned SmolLM2-135M-Instruct, `configs/cpu-custom.json`. Base: “7 multiplied by 8 is 56.” completed. Two checkpoints, five draws each, 64-token cap: 10 continuations / 199 generated tokens / about 10.1 seconds collection. Outcomes: eight `56`, one `54`, one capped `Other`; no logit fallback. Small pipeline check, not a reliability or fork-detection result.
 - No GPU or new cloud runtime was used. Muse-specific matching has protocol fixture coverage; these UI/readout changes have not been rerun on Muse GPU weights. Rebuild the Docker image to include this update before VM use.
+
+
+## 2026-09-09 — Updated RunPod image
+
+Rebuilt `fork-microscope:runpod` from `c08c79307d3383e473bb2eca6837684b32c8021f`. Container-side verification initially caught the missing Node executable used by the Python/browser parity test. Added the Node 22 binary from the official bookworm image, rebuilt, and verified 62 Python plus five JS tests pass inside the image. CPU startup/preflight, dashboard HTTP response, disabled model auto-load and results symlink were verified. No GPU allocation or model inference was performed for this packaging update.
+
+Private image publication succeeded in workflow `34374004796` after freeing hosted-runner disk. Published tag: `ghcr.io/ipolluxx/fork-microscope:035d4da70050aa2c42c87ce173f7e3fd25a997d0`. Digest: `sha256:8705a302eb48ab569ce1dc07435131f2390d7bff42cf1b861a16481837e1d634`. The workflow verified package visibility equals `private`. Local CLI package inspection returned missing `read:packages` scope; no claim of a local authenticated registry pull is made.
