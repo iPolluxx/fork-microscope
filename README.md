@@ -104,3 +104,12 @@ mkdir -p outputs/review-reproduction
 The reviewer benchmark reproduces its reported fixed-parameter Llama replay results to four decimals. See [results and limitations](reports/README.md), including actual expected-token budgets. Separate offset fits are worse than the uniform baseline in those settings; joint fits are close. This is not a matched-token-budget or matched-accuracy savings experiment, and it does not establish a better sampling strategy generally.
 
 The Goodfire submodule stays unmodified at `d32fed8d4162a4888291c4b3a38b059727c85a41`. Upstream tests and released-data checks exercise its original method. The strict readout, direct live mixture collection, multi-pass orchestration and viewer are our additions. Applying this workflow to Muse is a new-model experiment, not reproduction of the paper's model-specific benchmark. No GPU was used for these schema-2 changes. See [VALIDATION.md](VALIDATION.md) and [THIRD-PARTY.md](THIRD-PARTY.md).
+
+
+## Muse anticipation question
+
+`configs/muse-anticipation.json` preserves the exact question: “In your reasoning do you anticipate future turns in the conversation when you give your final output?” It tracks the literal texts `yes`, `no`, and `uncertain`; absent or multiple matches become Other. These labels are not appended to the prompt. A reply such as “I do not anticipate later turns” may therefore be Other. Review the recorded replies before interpreting this self-report measurement.
+
+Generate and inspect the base first. In the dashboard, use this prompt and answer list with a 2,048-token base cap. Then choose early/middle/later checkpoints on the actual trace, five draws each, and a 2,048-new-token continuation cap. The profile's positions 0, 64 and 128 are provisional: adjust after reading the trace, and do not run them if the response is shorter than 129 tokens. Three checkpoints are a completion/readout pilot, not enough for change-point segmentation. Nothing in the Docker startup automatically runs this experiment.
+
+Variation in the model's answer to this question is evidence about its generated self-report. It does not establish that the model internally plans for future conversation turns. The continuation sampling here contains no later user turns.

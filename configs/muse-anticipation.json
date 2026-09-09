@@ -1,0 +1,40 @@
+{
+  "load": {
+    "model_id": "meta-models/Muse-Glimmer-30B",
+    "revision": "a4e59da52a7bc87ae7251dd5545c0dd437c44b68",
+    "device": "cuda",
+    "batch_size": 1
+  },
+  "base": {
+    "prompt": "In your reasoning do you anticipate future turns in the conversation when you give your final output?",
+    "answers": [
+      "yes",
+      "no",
+      "uncertain"
+    ],
+    "mode": "chat",
+    "max_tokens": 2048,
+    "seed": 0
+  },
+  "run": {
+    "cont_max": 2048,
+    "temperature": 1.0,
+    "top_k": 10,
+    "threshold": 0.05,
+    "dense": false,
+    "reference_samples": 20,
+    "tuning": "cv",
+    "passes": [
+      {
+        "id": "pass_1",
+        "label": "Self-report completion pilot",
+        "start": 0,
+        "end": 128,
+        "stride": 64,
+        "offset": 0,
+        "samples": 5,
+        "seed": 0
+      }
+    ]
+  }
+}

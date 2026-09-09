@@ -55,3 +55,14 @@ def test_native_chat_template_returns_integer_ids_not_mapping_keys():
     adapter = AttachedModel.__new__(AttachedModel)
     adapter.tokenizer = SimpleNamespace(chat_template="native", apply_chat_template=template)
     assert adapter.prompt("Question?", ["one", "two", "three", "four"], "chat") == [11, 12]
+
+
+
+def test_anticipation_profile_keeps_prompt_and_pilot_separate():
+    from outcome_readout import validate_answers
+    config=json.loads((ROOT/'configs/muse-anticipation.json').read_text())
+    assert config['base']['prompt']=='In your reasoning do you anticipate future turns in the conversation when you give your final output?'
+    assert validate_answers(config['base']['answers'])==['yes','no','uncertain']
+    assert grid_plan(config['run'],2047)['pass_1']==[0,64,128]
+    assert config['run']['passes'][0]['samples']==5
+    assert config['run']['cont_max']==2048 and not config['run']['dense']
