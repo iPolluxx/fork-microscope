@@ -48,3 +48,7 @@ scp -r -P POD_SSH_PORT -i ~/.ssh/id_ed25519 root@POD_IP:/workspace/live-runs ./r
 ```
 
 The application lives at `/opt/fork-microscope`, model cache at `/workspace/huggingface`, and results at `/workspace/live-runs`. Without a persistent volume, all three are disposable when the Pod stops. The image is downloaded again if the next host has no cached copy. No startup-time or throughput improvement is claimed until measured on RunPod.
+
+## Validation (2026-09-08)
+
+The CUDA image built locally. With `AUTO_LOAD_MUSE=0`, injected public-key SSH authentication, automatic dashboard startup, its status endpoint, and the results directory link passed on a CPU-only host. The existing 34 Python and 3 JavaScript tests passed. Container-based GPU inference and RunPod deployment remain untested; the earlier Muse GPU test used the non-container installation. The publishing workflow is present but has not been dispatched.
