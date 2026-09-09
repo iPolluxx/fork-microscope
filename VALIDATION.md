@@ -4,6 +4,7 @@ Environment: Linux x86-64, Python 3.13.13, uv 0.11.2, PyTorch 2.11.0+cpu, Transf
 
 Completed checks:
 
+- Fresh recursive Git clone: `./scripts/setup.sh cpu` installed into a new virtual environment; all 34 repository Python tests and three JavaScript tests passed. The installed CLI served the dashboard assets and API successfully over loopback, including a same-origin model-control request.
 - Upstream: 76 Python tests passed. All 203 released stores match their SHA-256 manifest; the released reference outcome curve recomputes exactly.
 - Upstream numerical gate: both tracks' reference TV values/slopes and the deterministic-outcome gate passed. This is the upstream validation gate, not the full replicate-fan benchmark.
 - Real CPU inference: the pinned SmolLM2 smoke profile generated a base, sampled both offset grids and an independent dense reference (56 continuations total), fitted both curves with cross-validation, calculated comparison metrics, and saved inspectable records.
