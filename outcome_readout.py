@@ -1,6 +1,54 @@
 """Model-specific answer extraction without confusing Muse reasoning with its reply."""
+import re
+import unicodedata
 from forking_paths.answers import parse_mmlu_answer
 from forking_paths.run import extract_answers_for_branches as upstream_extract
+
+
+
+def normalize_answer(text):
+    return ' '.join(unicodedata.normalize('NFKC', text).casefold().split())
+
+
+def validate_answers(answers):
+    if type(answers) is not list or not 1 <= len(answers) <= 32:
+        raise ValueError('Enter 1–32 expected answers, one per line.')
+    if any(not isinstance(x, str) or not x.strip() or len(x) > 200 or '\n' in x or '\r' in x for x in answers):
+        raise ValueError('Each answer must be nonempty, on one line, and at most 200 characters.')
+    normalized = [normalize_answer(x) for x in answers]
+    if len(set(normalized)) != len(normalized) or 'other' in normalized:
+        raise ValueError('Answers must be unique ignoring case and whitespace. Other is reserved for unresolved outcomes.')
+    return [x.strip() for x in answers]
+
+
+def match_answer_text(reply, answers):
+    """Literal phrase matches, normalized case/whitespace, bounded by word edges.
+
+    Multiple distinct matches remain unresolved; this is not a semantic judge.
+    """
+    text = normalize_answer(reply)
+    matches = []
+    for answer in answers:
+        term = normalize_answer(answer)
+        pattern = (r'(?<!\w)' if re.match(r'\w', term[0]) else '') + re.escape(term) + (r'(?!\w)' if re.match(r'\w', term[-1]) else '')
+        if re.search(pattern, text):
+            matches.append(answer)
+    return matches
+
+
+def completed_reply(raw, is_muse):
+    if is_muse:
+        marker = 'to=user<|message|>'
+        if marker not in raw: return None
+        raw = raw.rsplit(marker, 1)[1]
+    else:
+        # Common explicit reasoning wrapper. Untagged reasoning cannot be
+        # separated generically; its mentions can affect text matching.
+        if '<think>' in raw and '</think>' not in raw: return None
+        if '</think>' in raw: raw = raw.rsplit('</think>', 1)[1]
+    for marker in ('<|eot|>', '<|end_of_text|>', '<|im_end|>', '</s>'):
+        raw = raw.split(marker, 1)[0]
+    return raw
 
 
 def muse_answer(raw):
@@ -36,7 +84,7 @@ def extract_answers_for_branches(model, base, branches, continuations, cfg, suff
         extractor="Muse completed to=user channel; unfinished/unparseable -> Other")
 
 
-def inspect_continuation(model, base, branch, cont, cap):
+def inspect_continuation(model, base, branch, cont, cap, answers=None):
     """Strict outcome readout: a capped generation is never a final answer.
 
     Upstream strips EOS; len(cont)<cap (or a forced EOS) establishes stopping.
@@ -48,16 +96,22 @@ def inspect_continuation(model, base, branch, cont, cap):
     text=model.tokenizer.decode(cont,skip_special_tokens=False)
     is_muse=getattr(model,'is_muse',False)
     channel=('user' if 'to=user<|message|>' in raw else 'reasoning') if is_muse else 'not_applicable'
-    label=None; source='incomplete'
+    label=None; source='incomplete'; matches=[]
+    reply=completed_reply(raw, is_muse) if complete else None
     if complete:
-        if is_muse:
+        if answers is not None:
+            matches = match_answer_text(reply, answers) if reply is not None else []
+            label = matches[0] if len(matches) == 1 else None
+            source = 'answer_text' if label else ('ambiguous' if matches else 'unparsed')
+        elif is_muse:
             # An EOS removed by the upstream sampler still terminates the reply.
             label=muse_answer(raw+'<|eot|>')
             source='muse_completed_user' if label else 'unparsed'
         else:
+            reply=raw  # Preserve the exact legacy regex input for inspection.
             label=parse_mmlu_answer(raw)
             source='completed_regex' if label else 'unparsed'
-    return dict(label=label or 'Other',label_source=source,channel_reached=channel,
+    return dict(label=label or 'Other',label_source=source,channel_reached=channel,matched_answers=matches,reply_text=reply,
         stop_reason='eos' if complete else 'length',
         stop_reason_evidence='forced_eos' if branch.tok_id in model.eos_ids else 'inferred_from_stripped_length',
         generated_tokens=len(cont),continuation_text=text,full_response_text=raw)

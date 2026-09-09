@@ -14,6 +14,7 @@ from forking_paths.resample import enumerate_branches_at
 from otrecon import data as od
 from otrecon.cv import cv_select
 from otrecon.models import MODEL_REGISTRY
+from outcome_readout import validate_answers
 from sampling import pass_plan, allocation, position_draws
 from otrecon.metrics import tv_to_gt, band_coverage, heldout_loglik
 
@@ -48,11 +49,12 @@ def grid_plan(c, last):
 
 def reconstruct(record, n, tuning, seed):
     warnings = []
+    K = len(record["categories"])
     if record.get('sampling_design') == 'position_mixture_v1':
         positions, draws = position_draws(record)
         idxs = positions
         if draws.shape != (len(positions), n): raise ValueError("Saved draw count differs from requested reconstruction count.")
-        weighted = od.counts_from_draws(draws,5,0,n)/n
+        weighted = od.counts_from_draws(draws,K,0,n)/n
         diag = dict(n_total=n,n_positions=len(positions),exhausted_fallbacks=0,all_collected_draws_used=True)
         capped = sum(o['stop_reason']=='length' for b in record['branches'] for o in b['observations'])
         total = draws.size
@@ -71,16 +73,16 @@ def reconstruct(record, n, tuning, seed):
             return dict(positions=positions,weighted=weighted.tolist(),raw=weighted.tolist(),support=[],smoothed=[],low=[],high=[],boundaries=[],parameters=None,tuning='withheld',cv_candidates=0,best_cv_score=None,mixture_diagnostics=diag,warnings=warnings,fit_status='withheld')
     else:
         idxs, weighted = od.weighted_o_t(record)
-        positions, draws, diag = od.mixture_draws(record, np.arange(5), 5, n_total=n, seed_base=seed)
+        positions, draws, diag = od.mixture_draws(record, np.arange(K), K, n_total=n, seed_base=seed)
         if diag['exhausted_fallbacks']: raise RuntimeError('Mixture sampling exhausted a branch unexpectedly.')
         warnings.append('Legacy per-branch record: the fit uses a subsample; weighted markers use all branch observations.')
     if len(positions)<4:
         warnings.append('Fewer than four checkpoints: segmentation and cross-validation are disabled; fixed smoothing only.')
         tuning='fixed'
     x = np.asarray(positions, float)
-    params, scores = (cv_select("M5a_segkernel", draws, x, n, 5, n_folds=5)
+    params, scores = (cv_select("M5a_segkernel", draws, x, n, K, n_folds=5)
         if tuning == "cv" else ({"variant":"mult", "pen":64.0, "h":32.0}, {}))
-    counts = od.counts_from_draws(draws, 5, 0, n)
+    counts = od.counts_from_draws(draws, K, 0, n)
     model = MODEL_REGISTRY["M5a_segkernel"]()
     model.fit(x, counts, n, params)
     support = np.arange(positions[0], positions[-1]+1)
@@ -98,12 +100,13 @@ def reconstruct(record, n, tuning, seed):
 
 
 def compare(reference, curve, samples, seed):
+    K = len(reference['categories'])
     if reference.get('sampling_design') == 'position_mixture_v1':
         positions, draws = position_draws(reference)
-        weighted = od.counts_from_draws(draws,5,0,samples)/samples
+        weighted = od.counts_from_draws(draws,K,0,samples)/samples
     else:
         positions, weighted = od.weighted_o_t(reference)
-        _, draws, _ = od.mixture_draws(reference, np.arange(5), 5, n_total=samples, seed_base=seed)
+        _, draws, _ = od.mixture_draws(reference, np.arange(K), K, n_total=samples, seed_base=seed)
     ix = np.array([positions.index(t) for t in curve["support"]])
     pred = np.asarray(curve["smoothed"])
     return dict(mean_tv=float(tv_to_gt(pred, weighted[ix]).mean()),
@@ -161,11 +164,17 @@ class LiveService:
                 integer(payload["batch_size"], "Batch size", 1, 128)
             elif action == "base":
                 if not self.model: raise ValueError("Attach a model first.")
-                exact(payload, "question choices mode max_tokens seed")
-                if not isinstance(payload["question"], str) or not 1<=len(payload["question"].strip())<=16000:
-                    raise ValueError("Enter a question (up to 16,000 characters).")
-                if type(payload["choices"]) is not list or len(payload["choices"]) != 4 or any(not isinstance(x,str) or not x.strip() or len(x)>4000 for x in payload["choices"]):
-                    raise ValueError("Enter four nonempty answer choices.")
+                if 'prompt' in payload:
+                    exact(payload, 'prompt answers mode max_tokens seed')
+                    if not isinstance(payload['prompt'], str) or not 1 <= len(payload['prompt'].strip()) <= 16000:
+                        raise ValueError('Enter a prompt (up to 16,000 characters).')
+                    payload = dict(payload, answers=validate_answers(payload['answers']))
+                else:
+                    exact(payload, "question choices mode max_tokens seed")
+                    if not isinstance(payload["question"], str) or not 1<=len(payload["question"].strip())<=16000:
+                        raise ValueError("Enter a question (up to 16,000 characters).")
+                    if type(payload["choices"]) is not list or len(payload["choices"]) != 4 or any(not isinstance(x,str) or not x.strip() or len(x)>4000 for x in payload["choices"]):
+                        raise ValueError("Enter four nonempty answer choices.")
                 if payload["mode"] not in ("chat", "base"): raise ValueError("Choose chat or base mode.")
                 integer(payload["max_tokens"], "Base cap", 8, 4096)
                 integer(payload["seed"], "Seed", 0, 2**31-1)
@@ -195,12 +204,13 @@ class LiveService:
                     self.check()
             elif action == "base":
                 self.progress("Generating the greedy base response and recording next-token probabilities…")
-                ids = self.model.prompt(p["question"], p["choices"], p["mode"])
+                ids = (self.model.prompt_text(p['prompt'], p['mode']) if 'prompt' in p
+                    else self.model.prompt(p["question"], p["choices"], p["mode"]))
                 self.context_check(len(ids)+p["max_tokens"])
                 base = self.model.base_path(ids, p["max_tokens"], top_k=min(50,self.model.info["vocab_size"]), seed=p["seed"])
                 self.check()
                 if len(base.gen_ids) < 2: raise ValueError("The model produced fewer than two response tokens. Try another question.")
-                self.base,self.question,self.base_config = base,dict(question=p["question"],choices=p["choices"]),p
+                self.base,self.question,self.base_config = base,(dict(question=p['prompt'],answers=p['answers'],matching='answer_text_anywhere_v1') if 'prompt' in p else dict(question=p['question'],choices=p['choices'])),p
             else:
                 self.collect(p)
             with self.lock:
@@ -246,9 +256,12 @@ class LiveService:
             unique_checkpoints=len(set(t for p in plan for t in p['positions'])),
             dense_positions=len(grids['dense']),sampling_design='position_mixture_v1')
 
+    def categories(self):
+        return [*self.question['answers'], 'Other'] if self.question and 'answers' in self.question else CATS
+
     def record(self, cfg):
         return dict(meta=dict(row_id=0,**self.question,model=self.model.info["model_id"]),
-            categories=CATS,base=dict(gen_ids=self.base.gen_ids,prompt_ids=self.base.prompt_ids,
+            categories=self.categories(),base=dict(gen_ids=self.base.gen_ids,prompt_ids=self.base.prompt_ids,
             base_text=self.model.decode(self.base.gen_ids),token_texts=[self.model.tokenizer.decode([x]) for x in self.base.gen_ids],
             finish_reason=self.base.finish_reason),config=cfg.to_dict(),branches=[])
 
@@ -288,7 +301,7 @@ class LiveService:
                     seed=int(np.random.SeedSequence([p['seed'],phase_i,t,branch.tok_id,202]).generate_state(1)[0])
                     continuations=self.model.draw_branch(branch,len(indices),c['cont_max'],c['temperature'],seed,self.check)
                     if len(continuations)!=len(indices): raise RuntimeError('Model returned an incorrect draw count.')
-                    observations=[inspect_continuation(self.model,self.base,branch,cont,c['cont_max']) for cont in continuations]
+                    observations=[inspect_continuation(self.model,self.base,branch,cont,c['cont_max'],self.question.get('answers')) for cont in continuations]
                     generated+=sum(map(len,continuations))
                     record['branches'].append(dict(t=t,tok_id=branch.tok_id,tok_p=branch.tok_p,is_base=branch.is_base,
                         answers=[o['label'] for o in observations],draw_indices=indices,cont_lens=list(map(len,continuations)),
@@ -307,16 +320,17 @@ class LiveService:
         reference=None
         if c['dense']:
             pos,draws=position_draws(records['dense'])
-            values=od.counts_from_draws(draws,5,0,c['reference_samples'])/c['reference_samples']
+            values=od.counts_from_draws(draws,len(self.categories()),0,c['reference_samples'])/c['reference_samples']
             rm=phase_costs['dense']; valid=rm['at_continuation_cap']/rm['continuations']<=.1
             reference=dict(positions=pos,values=values.tolist(),independent=True,valid=valid,
                 warning=None if valid else 'Reference exceeds 10% cap hits; comparison metrics withheld.')
             for key in curves:
                 if valid and curves[key]['fit_status']=='complete':
                     curves[key]['comparison']=compare(records['dense'],curves[key],c['reference_samples'],44_000_000)
-        result=dict(**metadata,base=self.base_metadata(),categories=CATS,
+        result=dict(**metadata,base=self.base_metadata(),categories=self.categories(),
             passes=[dict(id=p['id'],label=p['label'],configuration=p,curve=curves[p['id']]) for p in estimate['passes']],
             reference=reference,measured=phase_costs,caveats=[
+                'Text matching detects mentions, not semantic correctness. Multiple matched answers, unfinished and unmatched replies count as Other.',
                 'Every generated draw is used once. Branches are chosen from their renormalized temperature-1 probabilities.',
                 'Omitted branch mass is excluded; these are truncated-mixture outcome estimates.',
                 'Fits are withheld above 10% cap hits. This is a diagnostic gate, not a statistical guarantee.',
@@ -340,7 +354,7 @@ class LiveService:
         entries=[]
         for file in sorted(RUNS.glob("*/result.json"),key=lambda p:p.stat().st_mtime,reverse=True)[:100]:
             value=json.loads((file.parent/"manifest.json").read_text())
-            entries.append(dict(id=value["id"],model=value["model"]["model_id"],created=value["created"]))
+            entries.append(dict(id=value["id"],model=value["model"]["model_id"],created=value["created"],prompt=value.get("base_config",{}).get("prompt",value.get("base_config",{}).get("question",""))))
         return entries
 
     def result(self, run_id, raw=False):

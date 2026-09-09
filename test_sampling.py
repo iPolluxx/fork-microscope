@@ -69,7 +69,8 @@ def test_muse_alternate_eos_and_incomplete_reply():
     assert inspect_continuation(model,base,branch,[1,2],2)['label']=='Other'
     assert inspect_continuation(model,base,branch,[1],2)['label']=='B'
 
-def test_multibranch_collection_roundtrip(tmp_path,monkeypatch):
+@pytest.mark.parametrize('custom_answers', [None, ['answer is (A)', 'answer is (B)'], ['answer is (A)', 'answer is (B)', 'x', 'y', 'z', 'w']])
+def test_multibranch_collection_roundtrip(tmp_path,monkeypatch,custom_answers):
     import live_service as module
     from forking_paths.model import BasePath
     monkeypatch.setattr(module,'RUNS',tmp_path)
@@ -85,8 +86,12 @@ def test_multibranch_collection_roundtrip(tmp_path,monkeypatch):
             calls.append(count);return [[7 if branch.tok_id==10 else 8]]*count
     s=LiveService();s.model=Model();s.base=BasePath([1],[10]*16,[[10,11]]*16,[[np.log(.6),np.log(.4)]]*16,'stop')
     s.question={'question':'fixture','choices':['a','b','c','d']};s.base_config={'max_tokens':16};s.job={'id':'a'*32}
+    if custom_answers is not None: s.question={'question':'fixture','answers':custom_answers,'matching':'answer_text_anywhere_v1'}
     s.collect(CONFIG|{'dense':True})
     r=s.result('a'*32,raw=True)
+    assert r['categories']==(custom_answers or ['A','B','C','D'])+['Other']
+    assert len(r['passes'][0]['curve']['raw'][0])==len(r['categories'])
+    assert len(r['reference']['values'][0])==len(r['categories'])
     assert sum(calls)==170 # 4*10 + 13*10 reference
     assert len(r['passes'])==1 and r['schema_version']==2
     assert r['measured']['pass_1']['continuations']==40
@@ -116,3 +121,54 @@ def test_dashboard_module_is_served_and_root_opens_live_workspace():
         assert exc.value.code==400
     finally:
         server.shutdown();server.server_close();thread.join()
+
+
+@pytest.mark.parametrize('reply,expected', [
+    ('The answer is 56.', ['56']),
+    ('156 and 560', []),
+    ('I reject 54 and choose 56.', ['54', '56']),
+    ('I reject 54.', ['54']),  # mention matching intentionally does not judge truth
+    ('New   York is my answer.', ['New York']),
+    ('new yorkshire', []),
+    ('56 then 56', ['56']),
+    ('The answer is fifty-six.', []),
+])
+def test_literal_answer_matching(reply, expected):
+    from outcome_readout import match_answer_text
+    assert match_answer_text(reply, ['54','56','New York'])==expected
+
+
+@pytest.mark.parametrize('answers', [[], ['a','A'], ['Other'], ['  '], ['a\nb'], [7], ['x']*33])
+def test_invalid_custom_answers(answers):
+    from outcome_readout import validate_answers
+    with pytest.raises(ValueError): validate_answers(answers)
+
+
+def test_custom_matching_completion_and_channel_scope():
+    texts=['<think>54</think>56','<think>56',
+           'analysis 54 to=user<|message|>56','analysis 56', '54 or 56']
+    base=SimpleNamespace(gen_ids=[1]);branch=SimpleNamespace(idx=0,tok_id=2)
+    for raw,muse,label,source in [(texts[0],False,'56','answer_text'),
+                                  (texts[1],False,'Other','unparsed'),
+                                  (texts[2],True,'56','answer_text'),
+                                  (texts[3],True,'Other','unparsed'),
+                                  (texts[4],False,'Other','ambiguous')]:
+        model=SimpleNamespace(tokenizer=SimpleNamespace(decode=lambda *a,**k:raw),eos_ids=[99],is_muse=muse)
+        o=inspect_continuation(model,base,branch,[1],2,['54','56'])
+        assert (o['label'],o['label_source'])==(label,source)
+        if source=='ambiguous': assert o['matched_answers']==['54','56']
+        capped=inspect_continuation(model,base,branch,[1,2],2,['54','56'])
+        assert capped['label']=='Other' and capped['reply_text'] is None
+
+
+def test_custom_prompt_is_not_modified_by_tracking_answers():
+    from live_model import AttachedModel
+    messages=[]
+    adapter=AttachedModel.__new__(AttachedModel)
+    def template(value, **kwargs):
+        messages.extend(value)
+        assert kwargs['return_dict'] is False
+        return [1,2,3]
+    adapter.tokenizer=SimpleNamespace(chat_template='native',apply_chat_template=template)
+    assert adapter.prompt_text('My exact prompt.', 'chat')==[1,2,3]
+    assert messages==[{'role':'user','content':'My exact prompt.'}]

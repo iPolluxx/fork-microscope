@@ -42,10 +42,6 @@ class AttachedModel(ForkingModel):
                 raise ValueError("This tokenizer needs an EOS or padding token.")
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = "left"
-        # Avoid silent first-subtoken answer scoring on incompatible tokenizers.
-        self.letter_ids = [self.tokenizer(x, add_special_tokens=False)["input_ids"] for x in "ABCD"]
-        if any(len(x) != 1 for x in self.letter_ids) or len({x[0] for x in self.letter_ids}) != 4:
-            raise ValueError("The A–D logit readout requires four distinct single-token answer letters for this tokenizer.")
         self.info = dict(model_id=model_id, requested_revision=revision,
             resolved_revision=getattr(self.model.config, "_commit_hash", None), device=device,
             dtype=str(dtype), parameters=sum(p.numel() for p in self.model.parameters()),
@@ -62,8 +58,20 @@ class AttachedModel(ForkingModel):
                 tokenize=True, add_generation_prompt=True, return_dict=False))
         return list(self.tokenizer(format_mmlu_base(question, choices), add_special_tokens=True)["input_ids"])
 
+    def prompt_text(self, text, mode):
+        if mode == 'chat':
+            if not self.tokenizer.chat_template:
+                raise ValueError('This tokenizer has no chat template. Choose base/completion mode.')
+            return list(self.tokenizer.apply_chat_template(
+                [{'role': 'user', 'content': text}], tokenize=True,
+                add_generation_prompt=True, return_dict=False))
+        return list(self.tokenizer(text, add_special_tokens=True)['input_ids'])
+
     @torch.no_grad()
     def logit_read_letters(self, prefixes, seed=0):
+        self.letter_ids = [self.tokenizer(x, add_special_tokens=False)['input_ids'] for x in 'ABCD']
+        if any(len(x) != 1 for x in self.letter_ids) or len({x[0] for x in self.letter_ids}) != 4:
+            raise ValueError('Legacy logit readout requires distinct single-token A–D labels.')
         # Process one prefix at a time to bound answer-extraction memory.
         out = []
         supports_last = "logits_to_keep" in inspect.signature(self.model.forward).parameters or self.is_muse

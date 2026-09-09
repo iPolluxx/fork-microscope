@@ -25,3 +25,12 @@ These changes use direct position-level mixture collection: every generated obse
 - 76 upstream tests and 203 data hashes/reference round-trip pass. Upstream source remains unmodified.
 - The reviewer-provided 40-question, fixed-parameter Llama replay benchmark was reproduced. The numerical artifact and budget caveats are in `reports/`.
 - No VM or GPU was used for this update. Revised Muse GPU generation and container GPU inference remain untested. The previously built local container predates these changes; rebuild it before use.
+
+
+## 2026-09-09 — Custom prompts and continuation library
+
+- Added free-form prompt generation and 1–32 configurable answer texts, with versioned mention matching recorded in run metadata. Tracking answers do not alter the prompt. Case/whitespace-normalized whole-phrase matches, ambiguity, absent matches, capped replies and Muse/generic channel handling are covered by tests.
+- Generalized live histograms, reconstruction and dense-reference comparisons to the record's category count. End-to-end deterministic fixtures exercise legacy five-category records and custom three/seven-category records with independent references.
+- Local Python suite: 61 passing; JS math/pass suite: 5 passing. DOM interaction harness (temporary jsdom install, outside runtime dependencies) checks three-section navigation, prompt payloads, dirty prompt guard, independent passes, dynamic categories, pagination, search, completion filtering, raw text modes, literal HTML rendering and graph-to-checkpoint navigation. No browser visual inspection performed.
+- Real offline CPU run: `292a15247c414bfe96d150c9a3993c58`, pinned SmolLM2-135M-Instruct, `configs/cpu-custom.json`. Base: “7 multiplied by 8 is 56.” completed. Two checkpoints, five draws each, 64-token cap: 10 continuations / 199 generated tokens / about 10.1 seconds collection. Outcomes: eight `56`, one `54`, one capped `Other`; no logit fallback. Small pipeline check, not a reliability or fork-detection result.
+- No GPU or new cloud runtime was used. Muse-specific matching has protocol fixture coverage; these UI/readout changes have not been rerun on Muse GPU weights. Rebuild the Docker image to include this update before VM use.

@@ -46,7 +46,17 @@ A marker is the frequency of each observed answer among those S draws. Goodfire'
 
 Continuations use the chosen temperature, top_p=1 and top_k=0. Branch-selection probabilities always use temperature 1; the UI warns when the continuation temperature differs. Inherited generation defaults and effective sampling settings are saved separately.
 
-New runs use strict completed-answer extraction. A capped output is Other even if it contains an apparent answer. Generic models parse completed response text with the upstream answer regex and do not force an A-D logit fallback. Muse only parses a completed `to=user` channel; both `<|eot|>` and `<|end_of_text|>` stop generation, while `<|eom|>` only ends a channel. Upstream strips the terminal EOS, so stop reason is inferred from the forced token or stripped length and the exact removed EOS identity is not fabricated.
+New custom-prompt runs match 1–32 expected answer texts anywhere in a completed reply. The answer list is tracking metadata and is not appended to the prompt. Matching normalizes Unicode (NFKC), case and repeated whitespace, with word boundaries on word-like ends. It does not recognize semantic equivalents or negation. One distinct match gets that label; multiple distinct matches, no match or a capped output become Other. `Other` is reserved; answer strings must be unique after normalization. An answer such as `56` will not match `156`, but “I reject 56” will match. Inspect the saved matched answers and text before interpreting the curves.
+
+For generic models, an explicit `<think>…</think>` prefix is excluded; untagged reasoning remains part of the searchable response. No universal reasoning-channel parser is claimed. Legacy question/choices configurations keep the original A–D regex. Neither path forces a logit fallback. Muse only reads a completed `to=user` channel; both `<|eot|>` and `<|end_of_text|>` stop generation, while `<|eom|>` only ends a channel. Upstream strips the terminal EOS, so stop reason is inferred from the forced token or stripped length and the exact removed EOS identity is not fabricated.
+
+## Dashboard workflow
+
+1. **Setup & sample:** attach a compatible HF model ID or server-local model directory, write your exact prompt, and enter expected answers (one per line). Generate the base trace, then choose checkpoint region, spacing, draws and continuation cap. Add passes only when needed.
+2. **Results:** select a saved run, choose an outcome, and inspect its observed frequencies and eligible fitted curves. Clicking an observed point opens its evidence.
+3. **Continuations:** navigate pass → all checkpoints or one checkpoint → draw. Filter by outcome, completion or ambiguity and search the saved text. The paginated list opens a reader with new continuation text, full response, matcher input and token IDs. Old runs remain browsable with missing fields labeled unavailable.
+
+**Length versus count:** at checkpoint 60, retain original tokens 0–59, choose one branch token at 60, and generate up to `cont_max` new tokens after it. EOS can stop earlier. Each draw starts from the same checkpoint prefix, not the preceding draw. Spacing 4 visits every fourth position; 20 draws collects 20 continuations at each visited position. The cap limits each continuation’s length, not the checkpoint spacing or number of draws.
 
 ## Inspect and interpret
 
@@ -69,7 +79,9 @@ The cost panel reports selected draws and maximum continuation-token allowances.
 .venv/bin/fork-microscope run configs/muse-smoke.json --prepare-only
 ```
 
-Both shipped smoke profiles now use one pass. They deliberately retain small caps to test wiring and completion warnings, not to produce scientific results. Dashboard defaults use longer caps (base 512, continuation 768), which still require completion checks. `--prepare-only` loads weights and generates a base; another CLI run starts anew. Use the dashboard to sample the same in-memory base interactively.
+The original CPU and Muse smoke profiles use one pass and deliberately retain small caps to test wiring and completion warnings, not to produce scientific results. `cpu-custom.json` exercises free-form prompts and numeric text matching with a 64-token continuation cap; it is also a small pipeline check. Dashboard defaults use longer caps (base 512, continuation 768), which still require completion checks. `--prepare-only` loads weights and generates a base; another CLI run starts anew. Use the dashboard to sample the same in-memory base interactively.
+
+A custom `base` object uses `prompt` (up to 16,000 characters), `answers` (1–32 strings, each up to 200 characters), `mode` (`chat` or `base`), `max_tokens`, and `seed`. See `configs/cpu-custom.json` for a runnable example. The legacy `question` plus four `choices` object remains supported.
 
 New JSON run configuration contains `passes` plus shared `cont_max`, `temperature`, `top_k`, `threshold`, `dense`, `reference_samples`, and `tuning`. Each pass requires `id`, `label`, `start`, `end`, `stride`, `offset`, `samples`, `seed`. The independent dense reference spans the earliest through latest actual selected checkpoints. Legacy `samples/stride/shift/start/end/seed` configurations still parse as two passes, but new collection always uses per-checkpoint mixture sampling.
 
