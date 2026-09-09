@@ -1,4 +1,5 @@
-"""Matched-budget comparison on released Llama S=200 stores (CPU, read-only).
+"""Reviewer comparison on released Llama S=200 stores (CPU, read-only).
+Draw budgets are approximately matched; token budgets are not matched.
 Replicate blocks of S=30 draws: [0,30),[30,60),[60,90). Reference = weighted o_t over draws [90,200) (never used by any replicate).
 Arms at stride s (budget = 2 grids x S=30):
   A_sep  : two offset grids (s, shift 1), fitted separately; report mean of the two TVs (what the tool shows today)

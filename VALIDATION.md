@@ -19,7 +19,7 @@ Results are sensitive to tokenization, native chat template defaults, model vers
 
 These changes use direct position-level mixture collection: every generated observation is used once, with branch selection before generation. The live defaults are one pass; additional passes are optional. The old schema-1 results above remain historical evidence about the previous implementation, not validation of the revised sampling method.
 
-- 41 Python tests pass, including a multi-branch collection/save/reconstruction/reference roundtrip, weighted branch selection, no duplicate/discarded draws, strict generic/Muse completed-answer extraction, alternate Muse EOS, independent pass plans, invalid config handling, and completion/short-grid gates.
+- 42 Python tests pass, including a multi-branch collection/save/reconstruction/reference roundtrip, weighted branch selection, no duplicate/discarded draws, strict generic/Muse completed-answer extraction, alternate Muse EOS, independent pass plans, invalid config handling, and completion/short-grid gates.
 - 5 JavaScript math/pass-model tests pass. A temporary jsdom harness also exercised default/add/remove pass tabs, independent settings, submitted payloads, saved-run opening, continuation viewing, and omission of fitted curves when withheld. No browser visual QA was performed.
 - Real CPU run `8efc8894019b463c964f851309b8d4c2` produced 10 pass draws and 30 independent reference draws. All 40 hit the intentionally tiny 4-token cap, all were Other, no logit fallback occurred, and the fit/reference metrics were correctly withheld. This validates live generation and the new gate, not research quality.
 - 76 upstream tests and 203 data hashes/reference round-trip pass. Upstream source remains unmodified.

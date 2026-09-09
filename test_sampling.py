@@ -95,3 +95,24 @@ def test_multibranch_collection_roundtrip(tmp_path,monkeypatch):
         rec=r['records'][key];_,draws=position_draws(rec)
         assert draws.size==sum(len(b['answers']) for b in rec['branches'])
         assert all(b['observations'][0]['full_response_text'] for b in rec['branches'])
+
+
+def test_dashboard_module_is_served_and_root_opens_live_workspace():
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    from microscope_server import Handler
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        url=f'http://127.0.0.1:{server.server_port}'
+        with urllib.request.urlopen(url+'/passes.mjs') as response:
+            assert response.status==200 and b'export function newPass' in response.read()
+        with urllib.request.urlopen(url+'/') as response:
+            html=response.read()
+            assert b'id="add-pass"' in html and b'id="continuations"' in html
+        request=urllib.request.Request(url+'/api/live/run',data=b'{}',headers={'Content-Type':'application/json','Origin':url})
+        with pytest.raises(urllib.error.HTTPError) as exc: urllib.request.urlopen(request)
+        assert exc.value.code==400
+    finally:
+        server.shutdown();server.server_close();thread.join()
