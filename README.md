@@ -4,6 +4,10 @@ A local dashboard and CLI for sampling an open-weight model at two offset sets o
 
 This repository packages a research workbench, not a new validated research method. It keeps the original and shifted readouts separate. It does not yet implement automatic selection of a statistically sufficient sample count or an estimator that combines the two curves.
 
+## RunPod Docker template
+
+For a prebuilt environment with automatic dashboard startup and Muse loading, see [the container instructions](docker/README.md). The image build workflow is manually triggered; it does not allocate a GPU.
+
 ## Start on a GPU VM
 
 Use a Linux x86-64 NVIDIA GPU VM. The initial Muse profile uses full BF16 weights, one concurrent continuation, and short token caps. An 80 GB GPU is the starting hardware target; this is a capacity estimate, not a completed GPU benchmark. Allow roughly 150 GB of persistent disk for weights, the environment, and results. Longer contexts and larger concurrent batches require more memory. An NVIDIA driver compatible with CUDA 12.8 is required; the setup installs the Python CUDA runtime dependencies.

@@ -1,0 +1,14 @@
+.venv
+**/__pycache__
+**/.pytest_cache
+**/*.egg-info
+live-runs
+outputs
+.env
+.env.*
+**/*.log
+**/*.safetensors
+**/*.bin
+**/*.gguf
+**/*.pem
+**/*.key
