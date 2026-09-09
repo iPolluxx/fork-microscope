@@ -1,0 +1,15 @@
+# Validation scope — September 8, 2026
+
+Environment: Linux x86-64, Python 3.13.13, uv 0.11.2, PyTorch 2.11.0+cpu, Transformers 5.16.1. The dependency locks record the remaining versions. `OTRECON_FORCE_RUPTURES=1` selects the reference segmentation implementation to avoid unverified acceleration differences.
+
+Completed checks:
+
+- Upstream: 76 Python tests passed. All 203 released stores match their SHA-256 manifest; the released reference outcome curve recomputes exactly.
+- Upstream numerical gate: both tracks' reference TV values/slopes and the deterministic-outcome gate passed. This is the upstream validation gate, not the full replicate-fan benchmark.
+- Real CPU inference: the pinned SmolLM2 smoke profile generated a base, sampled both offset grids and an independent dense reference (56 continuations total), fitted both curves with cross-validation, calculated comparison metrics, and saved inspectable records.
+- Muse preflight: downloaded the pinned configuration and processor, constructed its native chat prompt and an empty-weight `MuseGlimmerForConditionalGeneration` model, and verified end-of-turn/channel token availability and single-token A–D labels. No Muse weights were loaded.
+- Repository tests exercise branch-based budgets, weighted outcome math, cross-validation, held-out comparisons, invalid configurations, Muse completed-answer extraction, and integer token IDs from the native chat template. JavaScript math tests cover grid costs and invalid inputs.
+
+Still to validate on the VM: CUDA execution, full Muse weights, peak GPU memory, throughput, complete Muse answers, and the full Muse sampling run. The CUDA dependency set was resolved and pinned; the available local machine has no NVIDIA GPU. Do not interpret the CPU smoke settings or empty-weight preflight as evidence of Muse research quality.
+
+Results are sensitive to tokenization, native chat template defaults, model version, numerical precision, sampling settings, batch size and truncation. Saved records preserve the exact prompt IDs, base IDs and generation configuration. Cross-device bitwise reproducibility is not promised.
