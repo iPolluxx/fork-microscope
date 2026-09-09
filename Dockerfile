@@ -23,5 +23,7 @@ RUN uv pip install --python .venv/bin/python --no-deps ./vendor/forking-fast/otr
     && rm -f /etc/ssh/ssh_host_* \
     && mkdir -p /run/sshd \
     && printf '\nPasswordAuthentication no\nPermitRootLogin prohibit-password\n' >> /etc/ssh/sshd_config
+# Include the JavaScript runtime used by the bundled verification suite.
+COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 EXPOSE 22
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/fork-microscope/docker/start.sh"]
