@@ -17,3 +17,15 @@ test('time and dollars require explicit assumptions and consistent units',()=>{
   assert.deepEqual(gpuEstimate(360000,0,2),{hours:null,dollars:null});
   assert.deepEqual(gpuEstimate(360000,100,0),{hours:1,dollars:0});
 });
+
+import {newPass,resultPasses} from './public/fork-microscope/passes.mjs';
+test('passes start with one and additional passes have independent settings',()=>{
+  const p=newPass();assert.equal(p.offset,0);assert.equal(p.id,'pass_1');
+  const q=newPass([p]);assert.equal(q.id,'pass_2');assert.equal(q.offset,1);
+  q.samples=50;assert.equal(p.samples,20);
+  const r=newPass([q]);assert.notEqual(r.id,q.id);
+});
+test('saved legacy and current passes are both readable',()=>{
+  assert.equal(resultPasses({passes:[{id:'custom'}]})[0].id,'custom');
+  assert.deepEqual(resultPasses({first:{},second:{},settings:{samples:5}}).map(p=>p.id),['first','second']);
+});

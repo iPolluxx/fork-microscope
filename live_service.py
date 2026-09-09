@@ -11,11 +11,10 @@ import uuid
 import numpy as np
 from forking_paths.config import ForkingConfig
 from forking_paths.resample import enumerate_branches_at
-from forking_paths.outcomes import build_outcome_vectors
-from forking_paths.prompts import THEREFORE_ABCD
 from otrecon import data as od
 from otrecon.cv import cv_select
 from otrecon.models import MODEL_REGISTRY
+from sampling import pass_plan, allocation, position_draws
 from otrecon.metrics import tv_to_gt, band_coverage, heldout_loglik
 
 ROOT = Path(__file__).resolve().parent
@@ -41,28 +40,43 @@ def exact(obj, fields):
 
 
 def grid_plan(c, last):
-    exact(c, "samples stride shift start end cont_max temperature top_k threshold seed dense reference_samples tuning")
-    for key, lo, hi in [("samples",5,512),("stride",2,128),("shift",1,127),
-        ("start",0,last),("end",0,last),("cont_max",1,4096),("top_k",1,50),
-        ("seed",0,2**31-1),("reference_samples",5,512)]:
-        integer(c[key], key, lo, hi)
-    real(c["temperature"], "Temperature", .05, 2)
-    real(c["threshold"], "Branch threshold", 0, 1)
-    if type(c["dense"]) is not bool or c["tuning"] not in ("cv", "fixed"):
-        raise ValueError("Choose dense reference on/off and CV or fixed tuning.")
-    if c["shift"] >= c["stride"] or c["end"] <= c["start"]:
-        raise ValueError("Offset must be smaller than spacing; the region must have positive length.")
-    first = list(range(c["start"], c["end"]-c["shift"]+1, c["stride"]))
-    if len(first) < 2:
-        raise ValueError("Choose a region with at least two paired checkpoints.")
-    return dict(first=first, second=[x+c["shift"] for x in first], dense=list(range(c["start"], c["end"]+1)))
+    plan = pass_plan(c, last)
+    grids = {p['id']:p['positions'] for p in plan}
+    grids['dense'] = list(range(min(p['positions'][0] for p in plan), max(p['positions'][-1] for p in plan)+1))
+    return grids
 
 
 def reconstruct(record, n, tuning, seed):
-    idxs, weighted = od.weighted_o_t(record)
-    positions, draws, diag = od.mixture_draws(record, np.arange(5), 5, n_total=n, seed_base=seed)
-    if diag["exhausted_fallbacks"]:
-        raise RuntimeError("Mixture sampling exhausted a branch unexpectedly.")
+    warnings = []
+    if record.get('sampling_design') == 'position_mixture_v1':
+        positions, draws = position_draws(record)
+        idxs = positions
+        if draws.shape != (len(positions), n): raise ValueError("Saved draw count differs from requested reconstruction count.")
+        weighted = od.counts_from_draws(draws,5,0,n)/n
+        diag = dict(n_total=n,n_positions=len(positions),exhausted_fallbacks=0,all_collected_draws_used=True)
+        capped = sum(o['stop_reason']=='length' for b in record['branches'] for o in b['observations'])
+        total = draws.size
+        unparsed=sum(o.get('label')=='Other' and o['stop_reason']!='length' for b in record['branches'] for o in b['observations'])
+        if unparsed: warnings.append(f'{unparsed}/{total} completed continuations have no parsed answer; Other is not an answer choice.')
+        if capped/total > .1:
+            warnings.append(f'{capped}/{total} continuations reached the token cap. Reconstruction withheld; increase the cap.')
+        if record['base'].get('finish_reason') != 'stop':
+            warnings.append('The fixed base response did not finish. Inspect it before interpreting outcomes.')
+        if n < 20: warnings.append('Fewer than 20 draws per checkpoint: this is a small-sample diagnostic, not a reliability guarantee.')
+        masses = [p['retained_mass'] for p in record['positions']]
+        if min(masses)<.95: warnings.append('Some checkpoints retain less than 95% of next-token probability mass; omitted branches are excluded.')
+        if record['config'].get('cont_temperature',1)!=1:
+            warnings.append('Branch weights use temperature 1; continuation temperature differs.')
+        if capped/total > .1:
+            return dict(positions=positions,weighted=weighted.tolist(),raw=weighted.tolist(),support=[],smoothed=[],low=[],high=[],boundaries=[],parameters=None,tuning='withheld',cv_candidates=0,best_cv_score=None,mixture_diagnostics=diag,warnings=warnings,fit_status='withheld')
+    else:
+        idxs, weighted = od.weighted_o_t(record)
+        positions, draws, diag = od.mixture_draws(record, np.arange(5), 5, n_total=n, seed_base=seed)
+        if diag['exhausted_fallbacks']: raise RuntimeError('Mixture sampling exhausted a branch unexpectedly.')
+        warnings.append('Legacy per-branch record: the fit uses a subsample; weighted markers use all branch observations.')
+    if len(positions)<4:
+        warnings.append('Fewer than four checkpoints: segmentation and cross-validation are disabled; fixed smoothing only.')
+        tuning='fixed'
     x = np.asarray(positions, float)
     params, scores = (cv_select("M5a_segkernel", draws, x, n, 5, n_folds=5)
         if tuning == "cv" else ({"variant":"mult", "pen":64.0, "h":32.0}, {}))
@@ -80,12 +94,16 @@ def reconstruct(record, n, tuning, seed):
         support=support.tolist(), smoothed=pred.tolist(), low=low.tolist(), high=high.tolist(),
         boundaries=boundaries, parameters=params, tuning=tuning,
         cv_candidates=len(scores), best_cv_score=max(scores.values()) if scores else None,
-        mixture_diagnostics=diag)
+        mixture_diagnostics=diag,warnings=warnings,fit_status='complete')
 
 
 def compare(reference, curve, samples, seed):
-    positions, weighted = od.weighted_o_t(reference)
-    _, draws, _ = od.mixture_draws(reference, np.arange(5), 5, n_total=samples, seed_base=seed)
+    if reference.get('sampling_design') == 'position_mixture_v1':
+        positions, draws = position_draws(reference)
+        weighted = od.counts_from_draws(draws,5,0,samples)/samples
+    else:
+        positions, weighted = od.weighted_o_t(reference)
+        _, draws, _ = od.mixture_draws(reference, np.arange(5), 5, n_total=samples, seed_base=seed)
     ix = np.array([positions.index(t) for t in curve["support"]])
     pred = np.asarray(curve["smoothed"])
     return dict(mean_tv=float(tv_to_gt(pred, weighted[ix]).mean()),
@@ -116,7 +134,7 @@ class LiveService:
         return dict(question=self.question, text=self.model.decode(self.base.gen_ids),
             tokens=[self.model.tokenizer.decode([x]) for x in self.base.gen_ids],
             length=len(self.base.gen_ids), finish_reason=self.base.finish_reason,
-            config=self.base_config)
+            config=self.base_config, top_token_probabilities=[float(np.exp(x[0])) for x in self.base.topk_logprobs])
 
     def progress(self, phase, completed=0, total=0):
         with self.lock:
@@ -199,10 +217,10 @@ class LiveService:
             raise ValueError(f"This configuration needs up to {needed} context tokens; the model limit is {limit}. Reduce token caps.")
 
     def configuration(self, c):
-        cfg = ForkingConfig(top_k=c["top_k"],p_thresh=c["threshold"],n_samples=c["samples"],
-            n0_samples=c["samples"],tok_depth=len(self.base.gen_ids),cont_max_tokens=c["cont_max"],
+        cfg = ForkingConfig(top_k=c["top_k"],p_thresh=c["threshold"],n_samples=c.get("samples",5),
+            n0_samples=c.get("samples",5),tok_depth=len(self.base.gen_ids),cont_max_tokens=c["cont_max"],
             base_max_tokens=self.base_config["max_tokens"] if self.base_config else len(self.base.gen_ids),
-            cont_temperature=c["temperature"],seed=c["seed"])
+            cont_temperature=c["temperature"],seed=c.get("seed",0))
         return cfg
 
     def branches(self, cfg, positions):
@@ -214,19 +232,19 @@ class LiveService:
 
     def estimate(self, c):
         if not self.base or not self.model: raise ValueError("Generate a base response first.")
+        plan = pass_plan(c,len(self.base.gen_ids)-1)
         grids = grid_plan(c,len(self.base.gen_ids)-1)
-        suffix = self.model.tokenizer(THEREFORE_ABCD,add_special_tokens=False)["input_ids"]
-        self.context_check(len(self.base.prompt_ids)+c["end"]+1+c["cont_max"]+len(suffix))
+        self.context_check(len(self.base.prompt_ids)+max(grids['dense'])+1+c['cont_max'])
         cfg = self.configuration(c)
         counts = {key:len(self.branches(cfg,pos)) for key,pos in grids.items()}
-        combined = (counts["first"]+counts["second"])*c["samples"]
-        dense_same = counts["dense"]*c["samples"]
-        reference = counts["dense"]*c["reference_samples"] if c["dense"] else 0
-        return dict(grids=grids,branches=counts,combined_rollouts=combined,
-            dense_same_samples_rollouts=dense_same,reference_rollouts=reference,
-            total_rollouts=combined+reference,max_continuation_tokens=(combined+reference)*c["cont_max"],
-            combined_token_cap=combined*c["cont_max"],dense_token_cap=dense_same*c["cont_max"],
-            reduction_at_equal_caps=1-combined/dense_same)
+        combined = sum(len(p['positions'])*p['samples'] for p in plan)
+        reference = len(grids['dense'])*c['reference_samples'] if c['dense'] else 0
+        return dict(grids=grids,passes=plan,branches=counts,combined_rollouts=combined,
+            reference_rollouts=reference,total_rollouts=combined+reference,
+            max_continuation_tokens=(combined+reference)*c['cont_max'],
+            sampled_checkpoint_visits=sum(len(p['positions']) for p in plan),
+            unique_checkpoints=len(set(t for p in plan for t in p['positions'])),
+            dense_positions=len(grids['dense']),sampling_design='position_mixture_v1')
 
     def record(self, cfg):
         return dict(meta=dict(row_id=0,**self.question,model=self.model.info["model_id"]),
@@ -235,69 +253,78 @@ class LiveService:
             finish_reason=self.base.finish_reason),config=cfg.to_dict(),branches=[])
 
     def collect(self, c):
-        from outcome_readout import extract_answers_for_branches
+        from outcome_readout import inspect_continuation
         estimate = self.estimate(c)
         cfg = self.configuration(c)
-        run_id = self.job["id"]
-        folder = RUNS/run_id
-        folder.mkdir()
-        suffix = self.model.tokenizer(THEREFORE_ABCD,add_special_tokens=False)["input_ids"]
+        run_id = self.job['id']; folder = RUNS/run_id; folder.mkdir()
         records,curves,phase_costs = {},{},{}
-        done = 0
-        total = estimate["total_rollouts"]
-        metadata = dict(id=run_id,model=self.model.info,settings=c,base_config=self.base_config,
-            estimate=estimate,created=time.time(),upstream_commit="d32fed8d4162a4888291c4b3a38b059727c85a41",
+        done=0; total=estimate['total_rollouts']
+        metadata = dict(id=run_id,schema_version=2,sampling_design='position_mixture_v1',model=self.model.info,
+            settings=c,base_config=self.base_config,estimate=estimate,created=time.time(),
+            upstream_commit='d32fed8d4162a4888291c4b3a38b059727c85a41',
             generation_defaults=self.model.model.generation_config.to_dict(),
-            versions={p:importlib.metadata.version(p) for p in ["torch","transformers","otrecon","forking-paths"]})
-        self.save(folder/"manifest.json", metadata)
-        for phase_i,key in enumerate(["first","second"]+(["dense"] if c["dense"] else [])):
-            record = self.record(cfg)
-            branches = self.branches(cfg,estimate["grids"][key])
-            n = c["reference_samples"] if key=="dense" else c["samples"]
-            record["config"].update(n_samples=n,n0_samples=n)
-            started=time.perf_counter(); generated=0; extract_seconds=0
-            for bi,branch in enumerate(branches):
+            effective_sampling=dict(branch_temperature=1,continuation_temperature=c['temperature'],top_p=1,top_k=0),
+            versions={p:importlib.metadata.version(p) for p in ['torch','transformers','otrecon','forking-paths']})
+        self.save(folder/'manifest.json',metadata)
+        plans=list(estimate['passes'])
+        if c['dense']:
+            plans.append(dict(id='dense',label='Independent reference',positions=estimate['grids']['dense'],samples=c['reference_samples'],seed=0))
+        for phase_i,p in enumerate(plans):
+            key=p['id']; n=p['samples']; record=self.record(cfg)
+            record.update(sampling_design='position_mixture_v1',positions=[])
+            record['config'].update(n_samples=n,n0_samples=n)
+            started=time.perf_counter(); generated=0
+            for t in p['positions']:
                 self.check()
-                self.progress(f"{key.capitalize()} · token {branch.idx} · branch {bi+1}/{len(branches)}",done,total)
-                seed=int(np.random.SeedSequence([c["seed"],phase_i,branch.idx,branch.tok_id]).generate_state(1)[0])
-                continuations=self.model.draw_branch(branch,n,c["cont_max"],c["temperature"],seed,self.check)
-                self.check()
-                before=time.perf_counter()
-                answers,diag=extract_answers_for_branches(self.model,self.base,[branch],[continuations],cfg,suffix,diag_sample=0)
-                extract_seconds+=time.perf_counter()-before
-                generated+=sum(map(len,continuations))
-                record["branches"].append(dict(t=branch.idx,tok_id=branch.tok_id,tok_p=branch.tok_p,
-                    is_base=branch.is_base,answers=answers[0],cont_lens=list(map(len,continuations)),
-                    continuation_ids=continuations,seed=seed,diagnostics=diag))
-                self.save(folder/f"{key}.json",record)  # Completed branches survive cancellation/errors.
-                done+=n
+                branches=self.branches(cfg,[t])
+                selection_seed=[p['seed'],phase_i,t,101]
+                picks=allocation(branches,n,selection_seed)
+                record['positions'].append(dict(t=t,samples=n,retained_mass=float(sum(b.tok_p for b in branches)),
+                    selection_seed=selection_seed,branch_choices=picks,candidates=[dict(tok_id=b.tok_id,tok_p=b.tok_p,is_base=b.is_base) for b in branches]))
+                for bi,branch in enumerate(branches):
+                    indices=[i for i,v in enumerate(picks) if v==bi]
+                    if not indices: continue
+                    self.progress(f"{p['label']} · token {t} · {len(indices)} draws from branch {bi+1}",done,total)
+                    seed=int(np.random.SeedSequence([p['seed'],phase_i,t,branch.tok_id,202]).generate_state(1)[0])
+                    continuations=self.model.draw_branch(branch,len(indices),c['cont_max'],c['temperature'],seed,self.check)
+                    if len(continuations)!=len(indices): raise RuntimeError('Model returned an incorrect draw count.')
+                    observations=[inspect_continuation(self.model,self.base,branch,cont,c['cont_max']) for cont in continuations]
+                    generated+=sum(map(len,continuations))
+                    record['branches'].append(dict(t=t,tok_id=branch.tok_id,tok_p=branch.tok_p,is_base=branch.is_base,
+                        answers=[o['label'] for o in observations],draw_indices=indices,cont_lens=list(map(len,continuations)),
+                        continuation_ids=continuations,observations=observations,seed=seed))
+                    done+=len(indices)
+                    self.save(folder/f'{key}.json',record)
             records[key]=record
-            phase_costs[key]=dict(continuations=n*len(branches),continuation_tokens=generated,
-                wall_seconds=time.perf_counter()-started,answer_extraction_seconds=extract_seconds,
-                regex_resolved=sum(b["diagnostics"]["n_regex_resolved"] for b in record["branches"]),
-                logit_fallback=sum(b["diagnostics"]["n_logit_fallback"] for b in record["branches"]),
-                at_continuation_cap=sum(length==c["cont_max"] for b in record["branches"] for length in b["cont_lens"]))
-            if key != "dense":
-                self.progress(f"Reconstructing {key} · {'five-fold cross-validation' if c['tuning']=='cv' else 'fixed parameters'}…",done,total)
-                curves[key]=reconstruct(record,c["samples"],c["tuning"],43_000_000+phase_i)
+            obs=[o for b in record['branches'] for o in b['observations']]
+            phase_costs[key]=dict(continuations=len(obs),continuation_tokens=generated,wall_seconds=time.perf_counter()-started,
+                logit_fallback=0,at_continuation_cap=sum(o['stop_reason']=='length' for o in obs),
+                unresolved=sum(o.get('label')=='Other' for o in obs))
+            if key!='dense':
+                self.progress(f"Reconstructing {p['label']}…",done,total)
+                curves[key]=reconstruct(record,n,c['tuning'],43_000_000+phase_i)
                 self.check()
         reference=None
-        if c["dense"]:
-            pos,weighted=od.weighted_o_t(records["dense"])
-            reference=dict(positions=pos,values=weighted.tolist(),independent=True)
-            for key in ("first","second"):
-                curves[key]["comparison"]=compare(records["dense"],curves[key],c["reference_samples"],44_000_000)
-        result=dict(**metadata,base=self.base_metadata(),categories=CATS,first=curves["first"],
-            second=curves["second"],reference=reference,measured=phase_costs,
-            caveats=["Retained-branch probabilities are renormalized; this is a truncated next-token mixture.",
-                "Samples are collected per branch; smoothing uses position-level mixture draws.",
-                "Nominal 90% credible bands are not guaranteed to achieve 90% frequentist coverage.",
-                "Dense reference uses separate continuations and remains a finite-sample estimate.",
-                "All five categories retained; no reference-driven category collapse.",
-                "Standard HF generation; cross-branch prefix-cache optimization is not enabled.",
-                "This single-question workflow does not reproduce paper-wide benchmarks or ablations."])
-        self.save(folder/"result.json",result)
-        with self.lock: self.job["result_id"]=run_id
+        if c['dense']:
+            pos,draws=position_draws(records['dense'])
+            values=od.counts_from_draws(draws,5,0,c['reference_samples'])/c['reference_samples']
+            rm=phase_costs['dense']; valid=rm['at_continuation_cap']/rm['continuations']<=.1
+            reference=dict(positions=pos,values=values.tolist(),independent=True,valid=valid,
+                warning=None if valid else 'Reference exceeds 10% cap hits; comparison metrics withheld.')
+            for key in curves:
+                if valid and curves[key]['fit_status']=='complete':
+                    curves[key]['comparison']=compare(records['dense'],curves[key],c['reference_samples'],44_000_000)
+        result=dict(**metadata,base=self.base_metadata(),categories=CATS,
+            passes=[dict(id=p['id'],label=p['label'],configuration=p,curve=curves[p['id']]) for p in estimate['passes']],
+            reference=reference,measured=phase_costs,caveats=[
+                'Every generated draw is used once. Branches are chosen from their renormalized temperature-1 probabilities.',
+                'Omitted branch mass is excluded; these are truncated-mixture outcome estimates.',
+                'Fits are withheld above 10% cap hits. This is a diagnostic gate, not a statistical guarantee.',
+                'Nominal bands are model-based, may under-cover, and exclude exactly zero and one.',
+                'Passes are fitted independently; overlapping checkpoints cost additional independent draws.',
+                'No claim of reasoning mechanism, exhaustive fork detection, or matched-accuracy savings.'])
+        self.save(folder/'result.json',result)
+        with self.lock: self.job['result_id']=run_id
 
     @staticmethod
     def save(path, data):
@@ -323,5 +350,5 @@ class LiveService:
         if not file.exists(): raise ValueError("No completed result exists for this run.")
         result=json.loads(file.read_text())
         if raw:
-            result["records"]={p.stem:json.loads(p.read_text()) for p in folder.glob("*.json") if p.stem in ("first","second","dense")}
+            result["records"]={p.stem:json.loads(p.read_text()) for p in folder.glob("*.json") if p.stem not in ("result","manifest")}
         return result

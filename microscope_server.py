@@ -42,6 +42,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.headers.get("Host", "") not in {f"127.0.0.1:{self.server.server_port}",f"localhost:{self.server.server_port}"}:
             return self.json_response(403,{"error":"Use the localhost address."})
         parsed = urlsplit(self.path)
+        if parsed.path == "/": self.path = "/live.html"
         if parsed.path.startswith("/api/live/"):
             try:
                 if parsed.path == "/api/live/status" and not parsed.query:
@@ -100,8 +101,10 @@ class Handler(SimpleHTTPRequestHandler):
             route=urlsplit(self.path)
             if route.query: raise ValueError("Unexpected query string.")
             if route.path == "/api/live/estimate":
-                if LIVE.job["status"]=="running": raise ValueError("Wait for the current job before estimating.")
-                return self.json_response(200,LIVE.estimate(payload))
+                with LIVE.lock:
+                    if LIVE.job["status"]=="running": raise ValueError("Wait for the current job before estimating.")
+                    estimate = LIVE.estimate(payload)
+                return self.json_response(200,estimate)
             if route.path == "/api/live/stop":
                 if payload!={}: raise ValueError("Stop takes an empty object.")
                 return self.json_response(200,LIVE.cancel())

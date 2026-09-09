@@ -28,7 +28,7 @@ function updateCost(c){
   const p=plan(c,metadata.last_token);currentCost=costs(c,metadata.expected_lengths,p);patterns(p);
   $('combined-tokens').textContent=compact(currentCost.combined);$('dense-tokens').textContent=compact(currentCost.dense);
   $('combined-tokens').title=nf.format(currentCost.combined)+' expected continuation tokens';$('dense-tokens').title=nf.format(currentCost.dense)+' expected continuation tokens';
-  $('saving').textContent=currentCost.saving===null?'—':`${Math.max(0,currentCost.saving*100).toFixed(1)}%`;
+  $('saving').textContent=currentCost.saving===null?'—':`${(currentCost.saving*100).toFixed(1)}%`;
   $('checkpoints').textContent=`${nf.format(currentCost.combinedCheckpoints)} / ${nf.format(currentCost.denseCheckpoints)}`;
   $('continuations').textContent=`${nf.format(currentCost.combinedContinuations)} vs ${nf.format(currentCost.denseContinuations)} continuations`;
   $('first-cost').textContent=compact(currentCost.first)+' tokens';$('second-cost').textContent=compact(currentCost.second)+' tokens';

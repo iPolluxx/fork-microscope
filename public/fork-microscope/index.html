@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Fork microscope · Two-pass sampling</title>
+  <title>Fork microscope · Legacy two-pass replay</title>
   <meta name="description" content="Inspect two offset sampling passes together and estimate their cost against sampling every position.">
   <link rel="stylesheet" href="/styles.css">
   <script src="/plotly.min.js" defer></script>
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <header class="topbar"><div><h1>Fork microscope</h1><span class="subtitle">Two-pass sampling</span></div><div class="header-actions"><a href="/live.html" style="color:white">Attach a model →</a><span class="local-status"><i></i> Recorded data · local</span><button id="reset" type="button">Reset settings</button></div></header>
+  <header class="topbar"><div><h1>Fork microscope</h1><span class="subtitle">Legacy two-pass replay</span></div><div class="header-actions"><a href="/live.html" style="color:white">Attach a model →</a><span class="local-status"><i></i> Recorded data · local</span><button id="reset" type="button">Reset settings</button></div></header>
   <main class="workspace">
     <aside class="controls" aria-label="Sampling controls">
       <h2>Set the sampling</h2>
@@ -29,7 +29,7 @@
       <section class="question-panel"><div class="eyebrow" id="model-label">Llama-3-8B-Instruct · Row 039</div><h2 id="question-text">In one metropolitan region, technical writers have an annual salary that is approximately normally distributed with a mean of $55,800. The first quartile of salaries is $48,815. What is the standard deviation?</h2><details><summary>Answer choices <span id="answer-key"></span></summary><ol id="choices" type="A"></ol></details></section>
       <section aria-label="Live cost calculator" class="cost-panel">
         <div class="section-heading"><h2>Estimated sampling cost</h2><span>Updates with your settings</span></div>
-        <div class="metrics" aria-live="polite"><div><span>Both passes</span><strong id="combined-tokens">—</strong><small>continuation tokens</small></div><div><span>Every position</span><strong id="dense-tokens">—</strong><small>same region and sample count</small></div><div><span>Estimated reduction</span><strong id="saving">—</strong><small>generated-token budget</small></div><div><span>Checkpoints</span><strong id="checkpoints">—</strong><small id="continuations">combined / dense</small></div></div>
+        <div class="metrics" aria-live="polite"><div><span>Both passes</span><strong id="combined-tokens">—</strong><small>continuation tokens</small></div><div><span>Every position</span><strong id="dense-tokens">—</strong><small>same region and sample count</small></div><div><span>Smaller token allowance</span><strong id="saving">—</strong><small>not matched-accuracy savings</small></div><div><span>Checkpoints</span><strong id="checkpoints">—</strong><small id="continuations">combined / dense</small></div></div>
         <div class="cost-breakdown"><span><i class="dot blue"></i>Pass 1 <b id="first-cost">—</b></span><span><i class="dot orange"></i>Pass 2 <b id="second-cost">—</b></span><span id="checkpoint-count">Same fixed base trace</span></div>
       </section>
       <section class="plot-panel">
@@ -38,7 +38,7 @@
         <div class="plot-footer"><span id="token-inspector">Hover a point to inspect its token.</span><span>Dots: observed estimates · Lines: separate fits</span></div>
       </section>
       <details class="trace-panel"><summary>Read the fixed response <span>Checkpoint colors match the chart</span></summary><div id="trace" class="trace"></div></details>
-      <details class="method-panel"><summary>How these estimates work</summary><div class="method-copy"><p>For each selected position, the calculator uses the recorded continuation lengths, weighted by the probabilities of the retained next-token branches. It multiplies their expected length by your sample count, then adds the two passes. The baseline samples every token in the same selected region at the same sample count.</p><p>The two grids are paired so neither gets an extra checkpoint at the end. Their readouts are fitted separately; one pass never replaces a detection or observation from the other. Fits use Forking Fast’s segment-kernel estimator with fixed penalty 64 and bandwidth 32.</p><p>The gray reference includes the recorded draws used by the smaller samples. It is not independent ground truth or a confidence bound. Changing the region does not change the already-recorded continuation length cap. All five outcome categories remain available.</p><p>Token savings are not measured runtime savings. Model loading, base generation, prefix processing, padding, answer extraction and CPU reconstruction are excluded. Optional time and dollar estimates use only the throughput and rate you enter.</p><p>Source: Forking Fast’s released Llama-3-8B-Instruct outcomes, 100 tinyMMLU questions, revision <code>d32fed8</code>. No model is loaded and no paid generation occurs here.</p></div></details>
+      <details class="method-panel"><summary>How these estimates work</summary><div class="method-copy"><p>For each selected position, the calculator uses the recorded continuation lengths, weighted by the probabilities of the retained next-token branches. It multiplies their expected length by your sample count, then adds the two passes. The baseline samples every token in the same selected region at the same sample count.</p><p>The two grids are paired so neither gets an extra checkpoint at the end. Their readouts are fitted separately; one pass never replaces a detection or observation from the other. Fits use Forking Fast’s segment-kernel estimator with fixed penalty 64 and bandwidth 32.</p><p>The gray reference includes the recorded draws used by the smaller samples. It is not independent ground truth or a confidence bound. Changing the region does not change the already-recorded continuation length cap. All five outcome categories remain available.</p><p>A smaller token allowance does not establish matched-accuracy savings or measured runtime savings. Model loading, base generation, prefix processing, padding, answer extraction and CPU reconstruction are excluded. Optional time and dollar estimates use only the throughput and rate you enter.</p><p>Source: Forking Fast’s released Llama-3-8B-Instruct outcomes, 100 tinyMMLU questions, revision <code>d32fed8</code>. No model is loaded and no paid generation occurs here.</p></div></details>
     </section>
   </main>
 </body></html>

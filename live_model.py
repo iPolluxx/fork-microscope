@@ -36,7 +36,7 @@ class AttachedModel(ForkingModel):
             vocab = self.tokenizer.get_vocab()
             if "<|eot|>" not in vocab:
                 raise ValueError("Muse tokenizer lacks its expected end-of-turn marker.")
-            self.eos_ids = [vocab["<|eot|>"]]  # <|eom|> ends a channel, not the turn.
+            self.eos_ids = sorted(set(self.eos_ids + [vocab[x] for x in ("<|eot|>","<|end_of_text|>") if x in vocab]) - {vocab.get("<|eom|>")})
         if self.tokenizer.pad_token_id is None:
             if self.tokenizer.eos_token_id is None:
                 raise ValueError("This tokenizer needs an EOS or padding token.")

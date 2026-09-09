@@ -8,9 +8,9 @@ def muse_answer(raw):
     if marker not in raw:
         return None
     reply=raw.rsplit(marker,1)[1]
-    if "<|eot|>" not in reply:
-        return None
-    return parse_mmlu_answer(reply.split("<|eot|>",1)[0])
+    endings=[reply.index(x) for x in ("<|eot|>","<|end_of_text|>") if x in reply]
+    if not endings: return None
+    return parse_mmlu_answer(reply[:min(endings)])
 
 
 def extract_answers_for_branches(model, base, branches, continuations, cfg, suffix, diag_sample=0):
@@ -34,3 +34,30 @@ def extract_answers_for_branches(model, base, branches, continuations, cfg, suff
         regex_coverage=resolved/total if total else None,n_logit_fallback=0,
         n_other=total-resolved,regex_vs_logit_agreement=None,
         extractor="Muse completed to=user channel; unfinished/unparseable -> Other")
+
+
+def inspect_continuation(model, base, branch, cont, cap):
+    """Strict outcome readout: a capped generation is never a final answer.
+
+    Upstream strips EOS; len(cont)<cap (or a forced EOS) establishes stopping.
+    The exact stripped EOS token cannot be recovered and is not fabricated.
+    """
+    complete = branch.tok_id in model.eos_ids or len(cont)<cap
+    ids=base.gen_ids[:branch.idx]+[branch.tok_id]+cont
+    raw=model.tokenizer.decode(ids,skip_special_tokens=False)
+    text=model.tokenizer.decode(cont,skip_special_tokens=False)
+    is_muse=getattr(model,'is_muse',False)
+    channel=('user' if 'to=user<|message|>' in raw else 'reasoning') if is_muse else 'not_applicable'
+    label=None; source='incomplete'
+    if complete:
+        if is_muse:
+            # An EOS removed by the upstream sampler still terminates the reply.
+            label=muse_answer(raw+'<|eot|>')
+            source='muse_completed_user' if label else 'unparsed'
+        else:
+            label=parse_mmlu_answer(raw)
+            source='completed_regex' if label else 'unparsed'
+    return dict(label=label or 'Other',label_source=source,channel_reached=channel,
+        stop_reason='eos' if complete else 'length',
+        stop_reason_evidence='forced_eos' if branch.tok_id in model.eos_ids else 'inferred_from_stripped_length',
+        generated_tokens=len(cont),continuation_text=text,full_response_text=raw)

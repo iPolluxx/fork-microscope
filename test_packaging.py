@@ -23,7 +23,7 @@ def test_profiles_are_versioned_and_have_valid_grids(profile):
     assert set(config) == {"load", "base", "run"}
     assert len(config["load"]["revision"]) == 40
     grids = grid_plan(config["run"], config["base"]["max_tokens"] - 1)
-    assert len(grids["first"]) == len(grids["second"]) == 2
+    assert len(grids["pass_1"]) == 2 and "second" not in grids
 
 
 def test_only_completed_user_channel_supplies_muse_answer():

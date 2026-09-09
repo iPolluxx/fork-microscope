@@ -36,7 +36,7 @@ Take the IP and exposed SSH port from the Pod's Connect panel:
 ssh -N -L 8767:127.0.0.1:8767 -p POD_SSH_PORT -i ~/.ssh/id_ed25519 root@POD_IP
 ```
 
-Open http://127.0.0.1:8767/live.html. Both the local and remote dashboard ports must be 8767. Startup output is in RunPod's container logs; the dashboard reports model-loading status. Do not click Load again while automatic loading is in progress.
+Open http://127.0.0.1:8767/live.html. Both the local and remote dashboard ports must be 8767. If preflight fails, SSH remains available and the error is saved to `/workspace/doctor.log`; no model is loaded. Startup output is in RunPod's container logs; the dashboard reports model-loading status. Do not click Load again while automatic loading is in progress.
 
 ## Download results before stopping
 

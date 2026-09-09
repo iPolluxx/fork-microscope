@@ -13,8 +13,13 @@ fi
 ssh-keygen -A
 /usr/sbin/sshd
 if [[ ! -e live-runs ]]; then ln -s /workspace/live-runs live-runs; fi
-# Fail on package / CUDA configuration errors before presenting a ready service.
-fork-microscope doctor
+# Keep SSH available for diagnosis when preflight fails; do not load a model.
+if ! fork-microscope doctor > /workspace/doctor.log 2>&1; then
+    cat /workspace/doctor.log
+    echo "Preflight failed. SSH remains available; see /workspace/doctor.log."
+    exec sleep infinity
+fi
+cat /workspace/doctor.log
 if [[ "${AUTO_LOAD_MUSE:-1}" == 1 ]]; then
     python docker/autoload.py &
 fi

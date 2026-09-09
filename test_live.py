@@ -22,17 +22,17 @@ def service():
 
 def test_actual_branches_drive_budget_and_topk():
     s=service();v=s.estimate(CONFIG)
-    assert v["branches"]==dict(first=4,second=4,dense=16)
-    assert v["combined_rollouts"]==40 and v["reference_rollouts"]==80
-    assert v["max_continuation_tokens"]==120*16
+    assert v["branches"]==dict(first=4,second=4,dense=12)
+    assert v["combined_rollouts"]==20 and v["reference_rollouts"]==30
+    assert v["max_continuation_tokens"]==50*16
     one=s.estimate(CONFIG|{"top_k":1,"dense":False})
     assert one["total_rollouts"]==20
-    assert one["reduction_at_equal_caps"]==.5
+    assert one["unique_checkpoints"]==4
 
 
 def test_threshold_and_context_validation():
     s=service()
-    assert s.estimate(CONFIG|{"threshold":.3})["branches"]["dense"]==8
+    assert s.estimate(CONFIG|{"threshold":.3})["branches"]["dense"]==6
     s.model.info["context_limit"]=10
     with pytest.raises(ValueError,match="context tokens"):
         s.estimate(CONFIG)
@@ -58,7 +58,7 @@ def test_weighted_outcome_matches_upstream_equation_and_reconstruction():
     np.testing.assert_allclose(weighted,out["o_t"])
     np.testing.assert_allclose(weighted[0],[.45,.55,0,0,0])
     fitted=reconstruct(rec,5,"cv",43_000_000)
-    assert fitted["cv_candidates"]>1
+    assert fitted["cv_candidates"]==0 # short-grid CV is disabled
     p=np.asarray(fitted["smoothed"])
     np.testing.assert_allclose(p.sum(axis=1),1)
     assert np.all(np.asarray(fitted["low"])<=np.asarray(fitted["high"]))
