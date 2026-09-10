@@ -94,7 +94,7 @@ Historical schema-1 results remain readable and visibly labeled legacy. Their ma
 ```bash
 ./scripts/setup.sh cpu
 .venv/bin/python -m pytest -q
-node --test test_math.mjs
+node --test test_*.mjs
 .venv/bin/fork-microscope run configs/cpu-smoke.json
 .venv/bin/fork-microscope verify-upstream
 mkdir -p outputs/review-reproduction

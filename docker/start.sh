@@ -20,7 +20,11 @@ if ! fork-microscope doctor > /workspace/doctor.log 2>&1; then
     exec sleep infinity
 fi
 cat /workspace/doctor.log
-if [[ "${AUTO_LOAD_MUSE:-1}" == 1 ]]; then
-    python docker/autoload.py &
+# Validate before requesting a model. Invalid configuration leaves SSH and UI available.
+if python docker/autoload.py --print-config > /workspace/model-startup.json 2> /workspace/autoload.log; then
+    python docker/autoload.py > >(tee -a /workspace/autoload.log) 2>&1 &
+else
+    cat /workspace/autoload.log
+    echo "Automatic model configuration invalid; correct it in the dashboard or deployment settings."
 fi
 exec fork-microscope serve --port 8767

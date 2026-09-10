@@ -1,22 +1,104 @@
-"""Attach the pinned Muse model once the local dashboard is listening."""
+"""Load the selected model after the local dashboard starts; never run an experiment."""
+import argparse
 import json
+import os
+from pathlib import Path
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
-url = 'http://127.0.0.1:8767'
-for attempt in range(120):
-    try:
-        with urllib.request.urlopen(url + '/api/live/status', timeout=2):
+ROOT = Path(__file__).resolve().parents[1]
+URL = 'http://127.0.0.1:8767'
+
+
+def enabled(env=None):
+    env = os.environ if env is None else env
+    value = env.get('AUTO_LOAD_MODEL', env.get('AUTO_LOAD_MUSE', '1'))
+    if value not in ('0', '1'):
+        raise ValueError('AUTO_LOAD_MODEL (or legacy AUTO_LOAD_MUSE) must be 0 or 1.')
+    return value == '1'
+
+
+def load_config(env=None, root=ROOT):
+    """Profile defaults plus explicit deployment overrides, without changing the profile."""
+    env = os.environ if env is None else env
+    path = Path(env.get('FORK_MODEL_PROFILE') or 'configs/muse-smoke.json')
+    if not path.is_absolute():
+        path = root / path
+    config = json.loads(path.read_text())
+    payload = dict(config.get('load', config))
+    if set(payload) != {'model_id', 'revision', 'device', 'batch_size'}:
+        raise ValueError('Model profile requires model_id, revision, device and batch_size only in its load object.')
+    model_id = env.get('FORK_MODEL_ID')
+    revision = env.get('FORK_MODEL_REVISION')
+    if model_id and model_id != payload['model_id'] and not revision:
+        raise ValueError('Changing FORK_MODEL_ID requires FORK_MODEL_REVISION; a different model cannot inherit the Muse revision.')
+    for key, value in [('model_id', model_id), ('revision', revision),
+                       ('device', env.get('FORK_MODEL_DEVICE'))]:
+        if value:
+            payload[key] = value
+    if env.get('FORK_MODEL_BATCH_SIZE'):
+        try:
+            payload['batch_size'] = int(env['FORK_MODEL_BATCH_SIZE'])
+        except ValueError as exc:
+            raise ValueError('FORK_MODEL_BATCH_SIZE must be an integer.') from exc
+    for key in ('model_id', 'revision'):
+        value = payload[key]
+        if not isinstance(value, str) or not value.strip() or len(value) > 500:
+            raise ValueError(f'{key} must be a nonempty model identifier/path or revision (up to 500 characters).')
+    if payload['device'] not in ('auto', 'cpu', 'cuda'):
+        raise ValueError('Model device must be auto, cpu or cuda.')
+    if type(payload['batch_size']) is not int or not 1 <= payload['batch_size'] <= 128:
+        raise ValueError('Model batch_size must be an integer from 1 to 128.')
+    return payload
+
+
+def request_json(path, payload=None):
+    request = urllib.request.Request(URL + path,
+        data=None if payload is None else json.dumps(payload).encode(),
+        headers={'Content-Type': 'application/json', 'Origin': URL})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.load(response)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--print-config', action='store_true', help='Validate and print selected model; no network calls.')
+    args = parser.parse_args()
+    config = load_config()
+    if args.print_config:
+        print(json.dumps({'auto_load': enabled(), 'load': config}, indent=2))
+        return
+    if not enabled():
+        print('Automatic model loading disabled.', flush=True)
+        return
+    for attempt in range(120):
+        try:
+            request_json('/api/live/status')
             break
-    except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError):
+            time.sleep(1)
+    else:
+        raise RuntimeError('Dashboard did not start; selected model was not loaded.')
+    result = request_json('/api/live/load', config)
+    job_id = result['job_id']
+    print('Automatic model load requested:', json.dumps(config), flush=True)
+    previous = None
+    while True:
+        status = request_json('/api/live/status')
+        job = status['job']
+        if job['id'] != job_id:
+            raise RuntimeError('Automatic load job was replaced; inspect dashboard status.')
+        if job['phase'] != previous:
+            print(job['phase'], flush=True)
+            previous = job['phase']
+        if job['status'] != 'running':
+            if job['status'] != 'complete' or not status.get('model'):
+                raise RuntimeError('Automatic model load did not complete: ' + job['phase'])
+            print('Model ready:', json.dumps(status['model']), flush=True)
+            return
         time.sleep(1)
-else:
-    raise SystemExit('Dashboard did not start; Muse was not loaded.')
-profile = json.loads(Path('configs/muse-smoke.json').read_text())
-request = urllib.request.Request(url + '/api/live/load',
-    data=json.dumps(profile['load']).encode(),
-    headers={'Content-Type': 'application/json', 'Origin': url})
-with urllib.request.urlopen(request, timeout=10) as response:
-    print('Automatic Muse load requested:', response.read().decode(), flush=True)
+
+
+if __name__ == '__main__':
+    main()

@@ -27,3 +27,14 @@ RUN uv pip install --python .venv/bin/python --no-deps ./vendor/forking-fast/otr
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 EXPOSE 22
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/fork-microscope/docker/start.sh"]
+
+# Model selection is inexpensive image metadata: changing it reuses all dependency layers.
+# Runtime environment overrides these defaults; no model weights or credentials are baked in.
+ARG FORK_MODEL_PROFILE=configs/muse-smoke.json
+ARG FORK_MODEL_ID=""
+ARG FORK_MODEL_REVISION=""
+ENV FORK_MODEL_PROFILE=${FORK_MODEL_PROFILE} \
+    FORK_MODEL_ID=${FORK_MODEL_ID} \
+    FORK_MODEL_REVISION=${FORK_MODEL_REVISION} \
+    HF_XET_HIGH_PERFORMANCE=1
+RUN python docker/autoload.py --print-config

@@ -42,6 +42,8 @@ def test_every_collected_outcome_is_used_once_in_fit():
     assert f['raw']==f['weighted']
     assert f['mixture_diagnostics']['all_collected_draws_used']
     assert f['cv_candidates']>0
+    assert f['segmentation_enabled'] is True
+    assert f['bands_kind']=='model_based_dirichlet_marginal'
     r['branches'][0]['draw_indices'][0]=2
     with pytest.raises(ValueError,match='Duplicate'):position_draws(r)
 
@@ -49,9 +51,11 @@ def test_completion_gate_and_short_grid_not_misleading():
     r=mixture_record(cap_hits=2)
     f=reconstruct(r,10,'cv',123)
     assert f['fit_status']=='withheld' and f['support']==[] and f['parameters'] is None
+    assert f['segmentation_enabled'] is False and f['bands_kind'] is None
     r=mixture_record();r['positions']=r['positions'][:2];r['branches']=r['branches'][:4]
     f=reconstruct(r,10,'cv',123)
     assert f['tuning']=='fixed' and f['cv_candidates']==0 and not f['boundaries']
+    assert f['segmentation_enabled'] is False
 
 def test_generic_cap_cannot_become_a_confident_answer():
     tok=SimpleNamespace(decode=lambda *a,**k:'The answer is (A)')

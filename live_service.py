@@ -70,7 +70,7 @@ def reconstruct(record, n, tuning, seed):
         if record['config'].get('cont_temperature',1)!=1:
             warnings.append('Branch weights use temperature 1; continuation temperature differs.')
         if capped/total > .1:
-            return dict(positions=positions,weighted=weighted.tolist(),raw=weighted.tolist(),support=[],smoothed=[],low=[],high=[],boundaries=[],parameters=None,tuning='withheld',cv_candidates=0,best_cv_score=None,mixture_diagnostics=diag,warnings=warnings,fit_status='withheld')
+            return dict(positions=positions,weighted=weighted.tolist(),raw=weighted.tolist(),support=[],smoothed=[],low=[],high=[],boundaries=[],parameters=None,tuning='withheld',cv_candidates=0,best_cv_score=None,mixture_diagnostics=diag,warnings=warnings,fit_status='withheld',segmentation_enabled=False,bands_kind=None)
     else:
         idxs, weighted = od.weighted_o_t(record)
         positions, draws, diag = od.mixture_draws(record, np.arange(K), K, n_total=n, seed_base=seed)
@@ -96,7 +96,8 @@ def reconstruct(record, n, tuning, seed):
         support=support.tolist(), smoothed=pred.tolist(), low=low.tolist(), high=high.tolist(),
         boundaries=boundaries, parameters=params, tuning=tuning,
         cv_candidates=len(scores), best_cv_score=max(scores.values()) if scores else None,
-        mixture_diagnostics=diag,warnings=warnings,fit_status='complete')
+        mixture_diagnostics=diag,warnings=warnings,fit_status='complete',
+        segmentation_enabled=len(positions)>=4,bands_kind='model_based_dirichlet_marginal')
 
 
 def compare(reference, curve, samples, seed):
@@ -200,7 +201,7 @@ class LiveService:
                 if action == "load":
                     from live_model import AttachedModel
                     self.progress("Loading tokenizer and weights…")
-                    self.model = AttachedModel(p["model_id"],p["revision"],p["device"],p["batch_size"])
+                    self.model = AttachedModel(p["model_id"],p["revision"],p["device"],p["batch_size"],progress=self.progress)
                     self.check()
             elif action == "base":
                 self.progress("Generating the greedy base response and recording next-token probabilities…")

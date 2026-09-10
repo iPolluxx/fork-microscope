@@ -17,5 +17,5 @@ jobs:
           node-version: '22'
       - run: ./scripts/setup.sh cpu
       - run: .venv/bin/python -m pytest -q
-      - run: node --test test_math.mjs
+      - run: node --test test_*.mjs
       - run: .venv/bin/fork-microscope verify-upstream

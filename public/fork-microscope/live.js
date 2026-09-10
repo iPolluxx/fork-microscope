@@ -1,5 +1,7 @@
 import {gpuEstimate} from './math.mjs';
 import {newPass,resultPasses} from './passes.mjs';
+import {passEvidence,wilsonInterval,reconstructionPoints,suggestedOutcome} from './graph-evidence.mjs';
+let graphIntervals=[],graphRange=null;
 const $=id=>document.getElementById(id),num=id=>$(id).value.trim()===''?NaN:Number($(id).value);
 let resultRevision=0,baseFormDirty=false;
 let state=null,result=null,budget=null,estimateTimer,estimateRevision=0,lastBaseSignature='',lastResultId='';
@@ -71,21 +73,38 @@ for(const id of ['question','answers','mode','base-cap','seed'])$(id).addEventLi
 for(const id of fields)$(id).addEventListener('input',queueEstimate);
 for(const id of ['throughput','rate'])$(id).addEventListener('input',money);
 async function listRuns(){const list=await api('runs');const previous=$('runs').value;$('runs').replaceChildren(new Option('Select a completed run',''),...list.map(r=>new Option(`${new Date(r.created*1000).toLocaleString()} · ${r.model} · ${(r.prompt??'').slice(0,80)}`,r.id)));$('runs').value=previous;}
-async function loadResult(id){if(!id)return;const revision=++resultRevision;const loaded=await api('export?id='+encodeURIComponent(id));if(revision!==resultRevision)return;result=loaded;$('outcome').replaceChildren(...result.categories.map(x=>new Option(x,x)));$('viewer-outcome').replaceChildren(new Option('All outcomes',''),...result.categories.map(x=>new Option(x,x)));$('viewer-search').value='';$('viewer-status').value='';$('export').hidden=false;$('export').href='/api/live/export?id='+id;$('export').download='fork-run-'+id+'.json';await draw();
+async function loadResult(id){if(!id)return;const revision=++resultRevision;const loaded=await api('export?id='+encodeURIComponent(id));if(revision!==resultRevision)return;result=loaded;$('outcome').replaceChildren(...result.categories.map(x=>new Option(x,x)));$('outcome').selectedIndex=suggestedOutcome(resultPasses(result),result.categories.length);graphRange=null;$('show-reconstruction').checked=!resultPasses(result).every(p=>{const e=passEvidence(p,result.records?.[p.id],result.categories.length);return e.sparse&&e.constant;});$('viewer-outcome').replaceChildren(new Option('All outcomes',''),...result.categories.map(x=>new Option(x,x)));$('viewer-search').value='';$('viewer-status').value='';$('export').hidden=false;$('export').href='/api/live/export?id='+id;$('export').download='fork-run-'+id+'.json';await draw();
   const ps=resultPasses(result);$('viewer-pass').replaceChildren(...ps.map(p=>new Option(p.label,p.id)),...(result.records?.dense?[new Option('Independent reference','dense')]:[]));viewerPositions();navigate('results');}
 $('runs').addEventListener('change',()=>loadResult($('runs').value).catch(e=>error(e.message)));
-for(const id of ['outcome','bands'])$(id).addEventListener('change',()=>draw().catch(e=>error(e.message)));
+for(const id of ['outcome','bands','observed-bands','show-reconstruction'])$(id).addEventListener('change',()=>draw().catch(e=>error(e.message)));
 async function draw(){
   if(!result)return;$('match-rule').textContent=result.base.question.matching==='answer_text_anywhere_v1'?'Readout: one distinct answer-text match anywhere in a completed reply. These curves measure matching text, not semantic correctness. Multiple matches, no match and unfinished replies count as Other.':'Historical A–D readout: labels retain the parser used when this run was collected.';const k=result.categories.indexOf($('outcome').value),traces=[],ps=resultPasses(result);
   if(result.reference?.valid!==false&&result.reference)traces.push({x:result.reference.positions,y:result.reference.values.map(v=>v[k]),name:'Independent dense reference',mode:'lines',line:{color:'#8793a5',width:1.5}});
   const colors=['#2563eb','#c87816','#17815c','#963dcc','#c02e52','#367783','#6d641f','#48516f'];
-  for(const [i,p]of ps.entries()){const c=p.curve,color=colors[i%colors.length];
-    if(c.support.length){if($('bands').checked){traces.push({x:c.support,y:c.low.map(v=>v[k]),mode:'lines',line:{width:0},showlegend:false,hoverinfo:'skip'});traces.push({x:c.support,y:c.high.map(v=>v[k]),mode:'lines',line:{width:0},fill:'tonexty',fillcolor:color+'18',showlegend:false,hoverinfo:'skip'});}
-      traces.push({x:c.support,y:c.smoothed.map(v=>v[k]),name:p.label+' · reconstructed',mode:'lines',line:{color,width:2}});}
-    traces.push({x:c.positions,y:c.weighted.map(v=>v[k]),name:p.label+(result.schema_version===2?' · observed outcomes':' · legacy weighted outcomes'),mode:'markers',marker:{color,size:8},customdata:c.positions.map(t=>[p.id,JSON.stringify(result.base.tokens[t])]),hovertemplate:'Token %{x}: %{customdata[1]}<br>P=%{y:.3f}<extra></extra>'});
+  const summaries=[],shapes=[];graphIntervals=[];
+  for(const [i,p]of ps.entries()){
+    const c=p.curve,color=colors[i%colors.length],e=passEvidence(p,result.records?.[p.id],result.categories.length);
+    const fitted=reconstructionPoints(c,k);
+    if($('show-reconstruction').checked&&fitted.length){
+      if($('bands').checked){traces.push({x:fitted.map(v=>v.t),y:fitted.map(v=>v.low),mode:'lines',line:{width:0},showlegend:false,hoverinfo:'skip',connectgaps:false});traces.push({x:fitted.map(v=>v.t),y:fitted.map(v=>v.high),mode:'lines',line:{width:0},fill:'tonexty',fillcolor:color+'18',showlegend:false,hoverinfo:'skip',connectgaps:false});}
+      traces.push({x:fitted.map(v=>v.t),y:fitted.map(v=>v.value),name:p.label+' · reconstruction',mode:'lines',line:{color,width:2,dash:'dash'},connectgaps:false,hovertemplate:'Token %{x}<br>Reconstructed proportion: %{y:.3f}<br>Not a sampled observation<extra></extra>'});
+    }
+    const intervals=e.observed.map(v=>v.counts?wilsonInterval(v.counts[k],v.samples):null);
+    traces.push({x:e.observed.map(v=>v.t),y:e.observed.map(v=>v.values[k]),name:p.label+(result.schema_version===2?' · observed':' · legacy weighted'),mode:'markers',marker:{color,size:9,line:{width:1,color:'#fff'}},
+      error_y:{type:'data',symmetric:false,visible:$('observed-bands').checked,array:intervals.map((v,j)=>v?v[1]-e.observed[j].values[k]:0),arrayminus:intervals.map((v,j)=>v?e.observed[j].values[k]-v[0]:0),thickness:1,width:4,color},
+      customdata:e.observed.map(v=>[p.id,JSON.stringify(result.base.tokens[v.t]),v.counts?`${v.counts[k]} / ${v.samples} draws`:'Legacy or unverified counts']),hovertemplate:'Checkpoint %{x}: %{customdata[1]}<br>Observed proportion: %{y:.3f}<br>%{customdata[2]}<extra></extra>'});
+    const status=e.constant?'No sampled outcome differences.':e.intervals.some(v=>v.tv>0)?'Sampled outcome differences present; inspect below.':'No comparable adjacent observations.';
+    summaries.push(`${p.label}: ${e.observed.length} checkpoints. ${status} ${e.segmentationEnabled?'Segmentation enabled.':'Segmentation unavailable.'}${e.sparse?' Fewer than four checkpoints; gaps remain unmeasured.':''}${e.invalidPoints?' Invalid saved observations were omitted.':''}`);
+    for(const interval of e.intervals){
+      graphIntervals.push({...interval,passId:p.id,label:p.label});
+      if(interval.segmented)shapes.push({type:'rect',xref:'x',yref:'paper',x0:interval.left,x1:interval.right,y0:0,y1:1,fillcolor:color+'12',line:{width:1,color:color+'66'},layer:'below'});
+    }
   }
-  await Plotly.react('live-plot',traces,{height:450,margin:{l:55,r:20,t:20,b:95},xaxis:{title:{text:'Response-token position'}},yaxis:{title:{text:`P(${$('outcome').value})`},range:[-.02,1.02]},legend:{orientation:'h',y:-.22},paper_bgcolor:'#fff',plot_bgcolor:'#fff'},{responsive:true,displaylogo:false});
-  const plot=$('live-plot');plot.removeAllListeners?.('plotly_click');plot.on?.('plotly_click',event=>{const point=event.points[0];if(!point.customdata)return;$('viewer-pass').value=point.customdata[0];$('viewer-search').value='';$('viewer-status').value='';$('viewer-outcome').value='';viewerPositions(point.x);navigate('evidence');$('continuations').scrollIntoView({behavior:'smooth',block:'nearest'});});
+  $('bands').disabled=!$('show-reconstruction').checked;
+  $('graph-summary').replaceChildren(...summaries.map(text=>{const p=document.createElement('p');p.textContent=text;return p;}));
+  await Plotly.react('live-plot',traces,{height:480,margin:{l:65,r:20,t:20,b:110},xaxis:{title:{text:'Response-token position'},...(graphRange?{range:graphRange}:{autorange:true})},yaxis:{title:{text:`Proportion: ${$('outcome').value}`},range:[-.04,1.04]},legend:{orientation:'h',y:-.22},shapes,paper_bgcolor:'#fff',plot_bgcolor:'#fff',hovermode:'closest',dragmode:'zoom',uirevision:result.id},{responsive:true,displaylogo:false,scrollZoom:false});
+  const plot=$('live-plot');plot.removeAllListeners?.('plotly_click');plot.on?.('plotly_click',event=>{const point=event.points[0];if(!point.customdata)return;openCheckpoint(point.customdata[0],point.x);});
+  renderIntervals();
   $('result-label').textContent=`${result.model.model_id} · ${result.schema_version===2?'all collected draws enter each fit':'legacy per-branch sampling'} · ${result.base.question.question}`;
   $('result-warnings').replaceChildren();
   const warnings=result.schema_version===2?[]:['Legacy run: fitted lines use a subsample of the collected outcomes; per-draw completion metadata may be unavailable.'];
@@ -93,7 +112,7 @@ async function draw(){
   $('statistics').replaceChildren();
   for(const p of ps){const c=p.curve,m=result.measured[p.id],box=document.createElement('div');box.className='stat-card';const title=document.createElement('strong');title.textContent=p.label;box.append(title);
     const lines=[`${fmt(m.continuations)} continuations · ${fmt(m.continuation_tokens)} generated tokens`,`${m.wall_seconds.toFixed(1)} seconds collection`,`${m.at_continuation_cap}/${m.continuations} reached the token cap.`];
-    if(c.parameters)lines.push(`Fit: ${c.parameters.variant}, penalty ${c.parameters.pen}, bandwidth ${c.parameters.h}`,c.positions.length<4?'Too few checkpoints to detect change intervals.':`Candidate intervals: ${c.boundaries.map(b=>`${b.left}–${b.right}`).join(', ')||'none detected'}`);else lines.push('Reconstruction withheld. Inspect the outcomes below.');
+    if(c.parameters)lines.push(`Fit: ${c.parameters.variant}, penalty ${c.parameters.pen}, bandwidth ${c.parameters.h}`,!passEvidence(p,result.records?.[p.id],result.categories.length).segmentationEnabled?'Segmentation unavailable for this pass.':`Fitted change intervals: ${passEvidence(p,result.records?.[p.id],result.categories.length).intervals.filter(b=>b.segmented).map(b=>`${b.left}–${b.right}`).join(', ')||'none detected'}`);else lines.push('Reconstruction withheld. Inspect the outcomes below.');
     if(c.comparison)lines.push(`Mean TV to reference: ${c.comparison.mean_tv.toFixed(4)}`,`Held-out log likelihood: ${c.comparison.mean_log_likelihood.toFixed(4)}`,`Band coverage: ${(100*c.comparison.empirical_band_coverage).toFixed(1)}% (model-based bands exclude exact 0/1).`);else lines.push('No valid independent-reference comparison.');
     for(const text of lines){const d=document.createElement('div');d.textContent=text;box.append(d);}$('statistics').append(box);
     warnings.push(...(c.warnings||[]).map(w=>`${p.label}: ${w}`));
@@ -101,6 +120,30 @@ async function draw(){
   }
   for(const w of warnings){const el=document.createElement('p');el.className='warning';el.textContent=w;$('result-warnings').append(el);}
 }
+function openCheckpoint(passId,t){
+  $('viewer-pass').value=passId;$('viewer-search').value='';$('viewer-status').value='';$('viewer-outcome').value='';viewerPositions(t);navigate('evidence');$('continuations').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function renderIntervals(){
+  const select=$('change-interval'),previous=select.value;
+  select.replaceChildren(...graphIntervals.map((v,i)=>new Option(`${v.label} · ${v.left}–${v.right} · ${v.segmented?'fitted interval':'observed difference'} · TV ${v.tv.toFixed(3)}`,`${v.passId}:${v.left}:${v.right}`)));
+  if([...select.options].some(o=>o.value===previous))select.value=previous;
+  if(!graphIntervals.length)select.append(new Option('No sampled differences or supported fitted intervals',''));
+  select.disabled=!graphIntervals.length;inspectInterval();
+}
+function selectedInterval(){return graphIntervals.find(v=>`${v.passId}:${v.left}:${v.right}`===$('change-interval').value);}
+function inspectInterval(){
+  const v=selectedInterval();for(const id of ['interval-left','interval-right','interval-zoom'])$(id).disabled=!v;
+  $('interval-text').hidden=!v;
+  if(!v){$('interval-summary').textContent='No change interval to inspect. You can still click any observed point to read the saved continuations. Flat sampled outcomes do not rule out changes inside unsampled gaps.';return;}
+  const k=result.categories.indexOf($('outcome').value);
+  $('interval-summary').textContent=`${v.segmented?'The segmentation fit selected this interval.':'Adjacent observed distributions differ here; the fit did not select this interval.'} ${$('outcome').value}: ${(v.leftValues[k]*100).toFixed(1)}% → ${(v.rightValues[k]*100).toFixed(1)}%. Total variation (TV) ${v.tv.toFixed(3)} measures the change across all outcome proportions, from 0 (same) to 1 (disjoint). This is descriptive, not a significance test. The later checkpoint additionally preserves original tokens ${v.left}–${v.right-1}:`;
+  $('interval-text').textContent=(result.base.tokens??[]).slice(v.left,v.right).join('');
+}
+$('change-interval').onchange=inspectInterval;
+$('interval-left').onclick=()=>{const v=selectedInterval();if(v)openCheckpoint(v.passId,v.left);};
+$('interval-right').onclick=()=>{const v=selectedInterval();if(v)openCheckpoint(v.passId,v.right);};
+$('interval-zoom').onclick=()=>{const v=selectedInterval();if(!v)return;const padding=Math.max(2,(v.right-v.left)*.25);graphRange=[Math.max(0,v.left-padding),v.right+padding];Plotly.relayout('live-plot',{'xaxis.range':graphRange,'xaxis.autorange':false});};
+$('reset-zoom').onclick=()=>{graphRange=null;Plotly.relayout('live-plot',{'xaxis.autorange':true});};
 function navigate(view){
   document.querySelector('.live-workspace').dataset.view=view;
   for(const el of document.querySelectorAll('.workspace-nav button')){

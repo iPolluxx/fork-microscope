@@ -81,7 +81,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json_response(400, {"error": str(exc)})
             except Exception:
                 return self.json_response(500, {"error": "Reconstruction failed for these settings. Try a wider region."})
-        if parsed.path not in ("/", "/index.html", "/app.js", "/math.mjs", "/passes.mjs", "/styles.css", "/plotly.min.js", "/live.html", "/live.js", "/live.css"):
+        if parsed.path not in ("/", "/index.html", "/app.js", "/math.mjs", "/passes.mjs", "/graph-evidence.mjs", "/styles.css", "/plotly.min.js", "/live.html", "/live.js", "/live.css"):
             return self.send_error(404)
         super().do_GET()
 

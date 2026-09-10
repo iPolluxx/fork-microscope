@@ -1,13 +1,19 @@
 """Model-native HF adapter. Reuses upstream token-space decoding and sampling."""
 import inspect
+import time
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
+from huggingface_hub import constants as hub_constants
+from transformers.utils.import_utils import is_env_variable_true
 from forking_paths.model import ForkingModel
 from forking_paths.prompts import format_mmlu_base, format_mmlu_instruct_user
 
 
 class AttachedModel(ForkingModel):
-    def __init__(self, model_id, revision="main", device="auto", gen_batch=4):
+    def __init__(self, model_id, revision="main", device="auto", gen_batch=4, progress=None):
+        started = time.perf_counter()
+        report = progress or (lambda phase: None)
+        report("Reading model configuration…")
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
         if device == "cuda" and not torch.cuda.is_available():
@@ -16,17 +22,27 @@ class AttachedModel(ForkingModel):
         self.enable_prefix_caching = False  # Ordinary generate caching; no cross-branch reuse claim.
         torch.set_num_threads(min(4, torch.get_num_threads()))
         config = AutoConfig.from_pretrained(model_id, revision=revision, trust_remote_code=False)
+        config_done = time.perf_counter()
+        # Resolve mutable Hub refs once so tokenizer and weights use the same snapshot.
+        load_revision = getattr(config, "_commit_hash", None) or revision
         self.is_muse = config.model_type == "muse_glimmer"
+        report("Loading tokenizer and chat template…")
         if self.is_muse:
-            processor = AutoProcessor.from_pretrained(model_id, revision=revision, trust_remote_code=False)
+            processor = AutoProcessor.from_pretrained(model_id, revision=load_revision, trust_remote_code=False)
             self.tokenizer = processor.tokenizer
         else:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision, trust_remote_code=False)
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id, revision=load_revision, trust_remote_code=False)
+        tokenizer_done = time.perf_counter()
+        report("Fetching cached or remote weights and loading model onto " + device + "…")
         loader = AutoModelForImageTextToText if self.is_muse else AutoModelForCausalLM
         dtype = torch.float32 if device == "cpu" else (torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
-        self.model = loader.from_pretrained(model_id, revision=revision,
+        self.model = loader.from_pretrained(model_id, revision=load_revision, config=config,
             dtype=dtype, trust_remote_code=False, use_safetensors=True,
             device_map={"": device}).eval()
+        if device == "cuda":
+            torch.cuda.synchronize()
+        weights_done = time.perf_counter()
+        report("Validating tokenizer and completion markers…")
         text_config = getattr(self.model.config, "text_config", self.model.config)
         ids = self.model.generation_config.eos_token_id
         self.eos_ids = list(ids) if isinstance(ids, list) else ([] if ids is None else [ids])
@@ -47,7 +63,14 @@ class AttachedModel(ForkingModel):
             dtype=str(dtype), parameters=sum(p.numel() for p in self.model.parameters()),
             context_limit=getattr(text_config, "max_position_embeddings", None),
             vocab_size=text_config.vocab_size, architecture=type(self.model).__name__,
-            chat_template=bool(self.tokenizer.chat_template), batch_size=gen_batch)
+            chat_template=bool(self.tokenizer.chat_template), batch_size=gen_batch,
+            loading=dict(config_seconds=config_done-started,
+                tokenizer_seconds=tokenizer_done-config_done,
+                weights_seconds=weights_done-tokenizer_done,
+                total_seconds=time.perf_counter()-started,
+                async_weight_loading_requested=not is_env_variable_true("HF_DEACTIVATE_ASYNC_LOAD"),
+                xet_high_performance=hub_constants.HF_XET_HIGH_PERFORMANCE,
+                hub_cache=hub_constants.HF_HUB_CACHE))
 
     def prompt(self, question, choices, mode):
         if mode == "chat":

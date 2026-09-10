@@ -16,4 +16,4 @@ fork-microscope = "fork_cli:main"
 py-modules = ["fork_cli", "microscope", "microscope_server", "live_model", "live_service", "outcome_readout", "sampling"]
 
 [tool.pytest.ini_options]
-testpaths = ["test_live.py", "test_microscope.py", "test_packaging.py", "test_sampling.py"]
+testpaths = ["test_live.py", "test_microscope.py", "test_packaging.py", "test_sampling.py", "test_model_loading.py"]
