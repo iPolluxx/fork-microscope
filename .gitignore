@@ -33,3 +33,7 @@ reports/vision-2026-09-09/
 .netrc
 .ssh/
 .aws/
+
+# Personal promotional drafts stay outside the repository
+docs/launch/SOCIAL-POSTS.md
+private-launch-materials/
