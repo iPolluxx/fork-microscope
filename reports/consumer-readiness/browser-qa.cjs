@@ -1,0 +1,40 @@
+const {chromium}=require('playwright') // npm install playwright && npx playwright install chromium;
+const fs=require('fs'),assert=require('node:assert/strict');
+const root='http://127.0.0.1:8767',run='352516a7e5184bc6841d8eb075ecb09a';
+(async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});
+ const page=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
+ const errors=[],mutations=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.method()==='POST')mutations.push(new URL(r.url()).pathname);});
+ try{
+  await page.goto(root+'/observatory.html?run='+run);await page.locator('#evidence').waitFor({state:'visible'});
+  assert.match(await page.locator('#run-facts').innerText(),/320/);
+  await page.locator('#candidate-links button').first().click();
+  assert.equal(await page.locator('#ref-start').inputValue(),'347');assert.equal(await page.locator('#ref-end').inputValue(),'355');assert.equal(await page.locator('#ref-stride').inputValue(),'2');
+  assert.match(await page.locator('#ref-preview').innerText(),/5 checkpoints.*100 new continuations/);
+  await page.waitForFunction(()=>document.getElementById('ref-status').textContent.includes('No matching source model'));
+  assert(await page.locator('#ref-run').isDisabled());
+  const download=page.waitForEvent('download');await page.locator('#ref-export').click();
+  const file=await download,plan=JSON.parse(fs.readFileSync(await file.path(),'utf8'));
+  assert.deepEqual(plan.run.passes[0].positions,[347,349,351,353,355]);assert.equal(plan.base.gen_ids.length,1693);assert.equal(plan.summary.continuations,100);
+  await page.locator('#ref-start').fill('400');await page.locator('#ref-end').fill('300');assert(await page.locator('#ref-export').isDisabled());
+  await page.locator('#candidate-links button').first().click();
+  await page.locator('#ref-connect').click();await page.locator('#source-model-note').waitFor({state:'visible'});
+  assert.equal(await page.locator('#revision').inputValue(),'a4e59da52a7bc87ae7251dd5545c0dd437c44b68');
+  assert(await page.locator('#load').isDisabled());assert.match(await page.locator('#runtime-hardware').innerText(),/No CUDA GPU/);
+  await page.locator('#observatory-link').click();await page.locator('#evidence').waitFor({state:'visible'});assert(page.url().includes(run));
+  await page.locator('#evidence-import').setInputFiles({name:'broken.json',mimeType:'application/json',buffer:Buffer.from('{broken')});
+  await page.waitForFunction(()=>document.getElementById('import-status').textContent.includes('not a valid JSON'));
+  const response=await page.request.get(root+'/api/live/export?id='+run);const exportText=await response.text();
+  await page.locator('#evidence-import').setInputFiles({name:'evidence.json',mimeType:'application/json',buffer:Buffer.from(exportText)});
+  await page.waitForResponse(r=>r.url().endsWith('/api/live/import')&&r.status()===200);
+  await page.locator('#evidence').waitFor({state:'visible'});assert(page.url().includes(run));
+  await page.screenshot({path:'reports/consumer-readiness/desktop.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});await page.reload();await page.locator('#evidence').waitFor({state:'visible'});
+  await page.locator('#candidate-links button').first().click();
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await page.screenshot({path:'reports/consumer-readiness/mobile.png',fullPage:true});
+  assert.deepEqual(errors,[]);assert(mutations.every(p=>['/api/live/refinement-plan','/api/live/import'].includes(p)));
+  fs.writeFileSync('reports/consumer-readiness/browser-checks.json',JSON.stringify({passed:true,errors,mutations,checks:['actual saved counts','candidate tighter grid exact endpoints','export saved1693tokenIDs','invalidinterval blocks','source model pin and return link','CPU Muse guard','malformedJSON rejected','idempotent archive import','mobile expandedrefinement nooverflow']},null,2));
+  console.log('Consumer integration browser checks passed',JSON.stringify(mutations));
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exit(1)});

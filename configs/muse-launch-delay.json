@@ -1,0 +1,39 @@
+{
+  "load": {
+    "model_id": "meta-models/Muse-Glimmer-30B",
+    "revision": "a4e59da52a7bc87ae7251dd5545c0dd437c44b68",
+    "device": "cuda",
+    "batch_size": 1
+  },
+  "base": {
+    "prompt": "You are advising a small company deciding whether to launch a software product tomorrow or delay it by two weeks.\n\nThe product passed its automated tests. In a pilot with 200 users, three experienced a synchronization bug that temporarily hid recent changes. No data was permanently lost, but the cause remains unknown.\n\nDelaying would cost approximately $40,000 and might lose an important customer. Launching would provide revenue needed to retain two employees. The team can disable synchronization if problems appear, but doing so removes the product\u2019s main advantage.\n\nThe engineer responsible believes the bug is rare and manageable. The support lead believes pilot users may have underreported problems. Neither has additional evidence.\n\nThink through the competing considerations carefully, including the strongest argument against your initial inclination. Make a recommendation using only the information provided.\n\nEnd your final response with exactly one of these decision markers: DECISION=LAUNCH or DECISION=DELAY. Do not include the other marker in your final response.",
+    "answers": [
+      "DECISION=LAUNCH",
+      "DECISION=DELAY"
+    ],
+    "mode": "chat",
+    "max_tokens": 2048,
+    "seed": 0
+  },
+  "run": {
+    "cont_max": 2048,
+    "temperature": 1.0,
+    "top_k": 20,
+    "threshold": 0.05,
+    "dense": false,
+    "reference_samples": 20,
+    "tuning": "cv",
+    "passes": [
+      {
+        "id": "pass_1",
+        "label": "Launch or delay \u2014 exploratory coverage",
+        "start": 0,
+        "end": 1582,
+        "stride": 113,
+        "offset": 0,
+        "samples": 12,
+        "seed": 7
+      }
+    ]
+  }
+}

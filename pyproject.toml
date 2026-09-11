@@ -4,16 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fork-microscope"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "A local model-sampling workbench built around Goodfire Forking Fast"
 requires-python = ">=3.13,<3.14"
+license = {file = "LICENSE"}
+readme = "README.md"
 dependencies = []
 
 [project.scripts]
 fork-microscope = "fork_cli:main"
 
 [tool.setuptools]
-py-modules = ["fork_cli", "microscope", "microscope_server", "live_model", "live_service", "outcome_readout", "sampling"]
+py-modules = ["fork_cli", "microscope", "microscope_server", "live_model", "live_service", "outcome_readout", "sampling", "replay_trace", "refinement", "evidence_io", "workspace_store", "worker_connection", "model_preflight", "run_comparison", "upstream_snapshot"]
 
 [tool.pytest.ini_options]
-testpaths = ["test_live.py", "test_microscope.py", "test_packaging.py", "test_sampling.py", "test_model_loading.py"]
+testpaths = ["test_live.py", "test_microscope.py", "test_packaging.py", "test_sampling.py", "test_model_loading.py", "test_replay_trace.py", "test_refinement.py", "test_evidence_io.py", "test_workspace.py", "test_worker_connection.py", "test_model_preflight.py", "test_run_comparison.py", "test_release.py"]

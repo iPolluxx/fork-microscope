@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "budget": "At the selected original-response caps: at most 17 checkpoint visits × 20 draws = 340 continuations, up to 261,120 new continuation tokens. Actual traces may be shorter. This excludes original-response generation and prefix processing; it is not a time or cost estimate.",
+  "checks": [
+    "cross-origin authenticated connection",
+    "remote prompt set save/reload",
+    "saved prompt into Configure",
+    "empty model defaults",
+    "batch disabled without model",
+    "mobile width",
+    "authenticated evidence download",
+    "reference budget preset/no automatic compute"
+  ],
+  "errors": []
+}

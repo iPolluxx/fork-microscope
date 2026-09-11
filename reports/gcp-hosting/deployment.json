@@ -1,0 +1,29 @@
+{
+  "url": "https://fork-microscope-wzyjs4vwsq-uc.a.run.app",
+  "revision": "fork-microscope-00002-sm5",
+  "project": "mightdoit",
+  "region": "us-central1",
+  "service": "fork-microscope",
+  "manifest_files": 29,
+  "verified_public_asset_hashes": true,
+  "service_annotations": {
+    "run.googleapis.com/ingress": "all",
+    "run.googleapis.com/maxScale": "2",
+    "run.googleapis.com/urls": "[\"https://fork-microscope-879716207624.us-central1.run.app\",\"https://fork-microscope-wzyjs4vwsq-uc.a.run.app\"]"
+  },
+  "revision_annotations": {
+    "run.googleapis.com/client-name": "gcloud",
+    "run.googleapis.com/client-version": "573.0.0",
+    "run.googleapis.com/cpu-throttling": "true",
+    "run.googleapis.com/execution-environment": "gen1",
+    "run.googleapis.com/startup-cpu-boost": "false"
+  },
+  "runtime_identity": "fork-dashboard-web@mightdoit.iam.gserviceaccount.com",
+  "resources": {
+    "limits": {
+      "cpu": "1",
+      "memory": "256Mi"
+    }
+  },
+  "image": "us-central1-docker.pkg.dev/mightdoit/fork-dashboard/dashboard:20260911013031-1f6ef032097c"
+}

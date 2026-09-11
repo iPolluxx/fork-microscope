@@ -12,12 +12,12 @@ autoload = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(autoload)
 
 
-def test_default_pinned_muse_and_legacy_switch():
-    config = autoload.load_config({})
-    assert config == json.loads((ROOT / 'configs/muse-smoke.json').read_text())['load']
-    assert autoload.enabled({})
+def test_default_is_empty_and_autoload_requires_opt_in():
+    assert autoload.load_config({}) is None
+    assert not autoload.enabled({})
     assert not autoload.enabled({'AUTO_LOAD_MUSE': '0'})
     assert autoload.enabled({'AUTO_LOAD_MODEL': '1', 'AUTO_LOAD_MUSE': '0'})
+    assert autoload.enabled({'AUTO_LOAD_MUSE': '1'})
     with pytest.raises(ValueError, match='0 or 1'):
         autoload.enabled({'AUTO_LOAD_MODEL': 'yes'})
 
@@ -33,7 +33,7 @@ def test_profile_selection_and_explicit_runtime_overrides():
 
 def test_cannot_inherit_another_models_revision():
     with pytest.raises(ValueError, match='requires FORK_MODEL_REVISION'):
-        autoload.load_config({'FORK_MODEL_ID': 'different/model'})
+        autoload.load_config({'FORK_MODEL_PROFILE': 'configs/muse-smoke.json', 'FORK_MODEL_ID': 'different/model'})
 
 
 @pytest.mark.parametrize('overrides', [
@@ -43,11 +43,11 @@ def test_cannot_inherit_another_models_revision():
 ])
 def test_invalid_deployment_settings_fail_before_http(overrides):
     with pytest.raises(ValueError):
-        autoload.load_config(overrides)
+        autoload.load_config({'FORK_MODEL_ID': 'test/model', **overrides})
 
 
 def test_profile_supports_load_only_and_rejects_unexpected_fields(tmp_path):
-    payload = autoload.load_config({})
+    payload = autoload.load_config({'FORK_MODEL_ID': 'test/model'})
     path = tmp_path / 'model.json'
     path.write_text(json.dumps(payload))
     assert autoload.load_config({'FORK_MODEL_PROFILE': str(path)}) == payload
@@ -87,7 +87,8 @@ def test_autoload_reports_job_error_not_success(monkeypatch):
 
 
 @pytest.mark.parametrize('is_muse', [False, True])
-def test_adapter_pins_tokenizer_and_weights_to_resolved_config(monkeypatch, is_muse):
+@pytest.mark.parametrize('local', [False, True])
+def test_adapter_pins_tokenizer_and_weights_to_resolved_config(monkeypatch, is_muse, local, tmp_path):
     import live_model as lm
     calls = []
     config = SimpleNamespace(model_type='muse_glimmer' if is_muse else 'other', _commit_hash='a' * 40,
@@ -107,18 +108,24 @@ def test_adapter_pins_tokenizer_and_weights_to_resolved_config(monkeypatch, is_m
     loader = lm.AutoModelForImageTextToText if is_muse else lm.AutoModelForCausalLM
     monkeypatch.setattr(loader, 'from_pretrained', factory('weights', model))
     phases = []
-    attached = lm.AttachedModel('test/model', 'main', 'cpu', 1, progress=phases.append)
-    assert calls[0][2]['revision'] == 'main'
-    assert all(call[2]['revision'] == 'a' * 40 for call in calls[1:])
+    model_id = 'test/model'
+    if local:
+        (tmp_path / 'config.json').write_text('{}')
+        (tmp_path / 'model.safetensors').write_bytes(b'fake-weights')
+        model_id = str(tmp_path)
+    attached = lm.AttachedModel(model_id, 'main', 'cpu', 1, progress=phases.append)
+    assert calls[0][2]['revision'] == (None if local else 'main')
+    assert all(call[2]['revision'] == (None if local else 'a' * 40) for call in calls[1:])
     assert calls[-1][2]['config'] is config
     assert calls[-1][2]['dtype'] == lm.torch.float32
     assert calls[-1][2]['trust_remote_code'] is False
     assert calls[-1][2]['use_safetensors'] is True
     assert calls[-1][2]['device_map'] == {'': 'cpu'}
     assert attached.info['requested_revision'] == 'main'
-    assert attached.info['resolved_revision'] == 'a' * 40
+    assert attached.info['resolved_revision'] == (lm.local_model_identity(model_id) if local else 'a' * 40)
+    assert attached.info['source_type'] == ('local' if local else 'hub')
     assert attached.info['loading']['total_seconds'] >= attached.info['loading']['weights_seconds'] >= 0
-    assert len(phases) == 4
+    assert len(phases) == (6 if local else 4)
 
 
 def test_disabled_autoload_never_requests_a_model(monkeypatch, capsys):
@@ -128,3 +135,29 @@ def test_disabled_autoload_never_requests_a_model(monkeypatch, capsys):
     monkeypatch.setattr(autoload, 'request_json', lambda *a: pytest.fail('Disabled autoload must not call dashboard.'))
     autoload.main()
     assert 'disabled' in capsys.readouterr().out
+
+
+def test_explicit_generic_model_uses_main_without_personalized_profile():
+    assert autoload.load_config({'FORK_MODEL_ID': 'test/model'}) == dict(model_id='test/model', revision='main', device='auto', batch_size=1)
+
+
+def test_local_source_hash_mismatch_fails_before_weight_load(monkeypatch, tmp_path):
+    import live_model as lm
+    (tmp_path / 'config.json').write_text('{}')
+    (tmp_path / 'model.safetensors').write_bytes(b'changed-weights')
+    monkeypatch.setattr(lm.AutoConfig, 'from_pretrained', lambda *a, **k: pytest.fail('Mismatched local contents must fail before model loading'))
+    with pytest.raises(ValueError, match='differ from the saved source identity'):
+        lm.AttachedModel(str(tmp_path), 'local-sha256:' + '0' * 64, 'cpu', 1)
+
+
+def test_autoload_worker_token_is_only_a_request_header(monkeypatch):
+    import io
+    monkeypatch.setenv('FORK_WORKER_TOKEN', 'private-worker-token')
+    observed = []
+    def response(req, timeout):
+        observed.append(req)
+        return io.BytesIO(b'{"ready":true}')
+    monkeypatch.setattr(autoload.urllib.request, 'urlopen', response)
+    assert autoload.request_json('/api/live/status')['ready']
+    assert observed[0].get_header('Authorization') == 'Bearer private-worker-token'
+    assert 'private-worker-token' not in observed[0].full_url

@@ -1,5 +1,7 @@
 # Third-party provenance
 
+Fork Microscope’s own code is covered by the root MIT LICENSE. That license does not relicense the materials below.
+
 ## Forking Fast
 
 Source: https://github.com/ericb-goodfire/forking-fast

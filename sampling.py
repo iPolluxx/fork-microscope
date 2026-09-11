@@ -37,7 +37,7 @@ def pass_plan(c, last):
             raise ValueError('Configure between one and eight passes.')
     plan=[];seen=set()
     for p in specs:
-        if type(p) is not dict or set(p)!={'id','label','start','end','stride','offset','samples','seed'}:
+        if type(p) is not dict or set(p)-{'positions'}!={'id','label','start','end','stride','offset','samples','seed'}:
             raise ValueError('A pass requires id, label, start, end, stride, offset, samples and seed.')
         import re
         if not isinstance(p['id'],str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,31}',p['id']) or p['id']=='dense' or p['id'] in seen:
@@ -48,6 +48,13 @@ def pass_plan(c, last):
         for key,lo,hi in [('start',0,last),('end',0,last),('stride',1,128),('offset',0,p['stride']-1 if type(p['stride']) is int else 0),('samples',5,512),('seed',0,2**31-1)]:
             integer(p[key],key,lo,hi)
         positions=list(range(p['start']+p['offset'],p['end']+1,p['stride']))
+        if 'positions' in p:
+            positions=p['positions']
+            if type(positions) is not list or not 2<=len(positions)<=4096:
+                raise ValueError('Explicit positions require 2–4096 checkpoint IDs.')
+            for t in positions: integer(t,'checkpoint',p['start'],p['end'])
+            if positions!=sorted(set(positions)) or positions[0]!=p['start'] or positions[-1]!=p['end'] or p['offset']!=0:
+                raise ValueError('Explicit positions must be ordered, unique, include both endpoints, and have offset zero.')
         if len(positions)<2: raise ValueError(f"{p['label']}: choose at least two checkpoints.")
         plan.append(dict(p,positions=positions))
     return plan

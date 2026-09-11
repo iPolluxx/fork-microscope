@@ -1,0 +1,477 @@
+{
+  "created_utc": "2026-09-10T23:14:36Z",
+  "python": "3.13.13",
+  "upstream_commit": "d32fed8d4162a4888291c4b3a38b059727c85a41",
+  "upstream_clean": true,
+  "strict_ruptures": true,
+  "checks": [
+    {
+      "name": "released_store_hashes",
+      "passed": true,
+      "files": 203
+    },
+    {
+      "name": "all_released_weighted_reference_curves_recompute",
+      "passed": true,
+      "files": 203
+    },
+    {
+      "name": "released_data_live_vs_pristine_baseline",
+      "passed": true,
+      "track": "llama",
+      "row": 12,
+      "checkpoints": 24,
+      "draws": 20,
+      "parameters": {
+        "variant": "mult",
+        "pen": 8.0,
+        "h": 16.0
+      },
+      "cv_candidates": 168,
+      "cv_score_error": 0.0,
+      "point_max_error": 0.0,
+      "manual_kernel_max_error": 3.3306690738754696e-16,
+      "boundaries": [
+        {
+          "left": 156,
+          "right": 171,
+          "midpoint": 163.5
+        },
+        {
+          "left": 187,
+          "right": 202,
+          "midpoint": 194.5
+        }
+      ]
+    },
+    {
+      "name": "released_data_live_vs_pristine_baseline",
+      "passed": true,
+      "track": "llama",
+      "row": 39,
+      "checkpoints": 24,
+      "draws": 20,
+      "parameters": {
+        "variant": "mult",
+        "pen": 64.0,
+        "h": 16.0
+      },
+      "cv_candidates": 168,
+      "cv_score_error": 0.0,
+      "point_max_error": 0.0,
+      "manual_kernel_max_error": 2.220446049250313e-16,
+      "boundaries": []
+    },
+    {
+      "name": "released_data_live_vs_pristine_baseline",
+      "passed": true,
+      "track": "deepseek",
+      "row": 12,
+      "checkpoints": 21,
+      "draws": 20,
+      "parameters": {
+        "variant": "linear",
+        "pen": 1.0,
+        "h": 128.0
+      },
+      "cv_candidates": 168,
+      "cv_score_error": 0.0,
+      "point_max_error": 0.0,
+      "manual_kernel_max_error": 2.220446049250313e-16,
+      "boundaries": [
+        {
+          "left": 38,
+          "right": 55,
+          "midpoint": 46.5
+        },
+        {
+          "left": 168,
+          "right": 194,
+          "midpoint": 181.0
+        },
+        {
+          "left": 247,
+          "right": 275,
+          "midpoint": 261.0
+        },
+        {
+          "left": 512,
+          "right": 543,
+          "midpoint": 527.5
+        }
+      ]
+    },
+    {
+      "name": "released_data_live_vs_pristine_baseline",
+      "passed": true,
+      "track": "deepseek",
+      "row": 39,
+      "checkpoints": 10,
+      "draws": 20,
+      "parameters": {
+        "variant": "mult",
+        "pen": 64.0,
+        "h": 128.0
+      },
+      "cv_candidates": 168,
+      "cv_score_error": 0.0,
+      "point_max_error": 0.0,
+      "manual_kernel_max_error": 2.220446049250313e-16,
+      "boundaries": [
+        {
+          "left": 320,
+          "right": 635,
+          "midpoint": 477.5
+        }
+      ]
+    },
+    {
+      "name": "multinomial_cost_and_exhaustive_pelt_check",
+      "passed": true,
+      "breakpoints": [
+        3,
+        6
+      ],
+      "objective": 16.69580160767812,
+      "legal_partitions": 5
+    },
+    {
+      "name": "saved_muse_curve_recomputes",
+      "passed": true,
+      "run_id": "edc9dbfd191f4edfa885c2e97116d021",
+      "draws": 180,
+      "positions": 15,
+      "parameters": {
+        "variant": "mult",
+        "pen": 2.0,
+        "h": 128.0
+      },
+      "boundaries": [
+        {
+          "left": 339,
+          "right": 452,
+          "midpoint": 395.5
+        }
+      ],
+      "max_numeric_error": 1.1102230246251565e-16,
+      "retained_mass_min": 0.7909047576059811,
+      "retained_mass_max": 1.0,
+      "per_checkpoint": [
+        {
+          "t": 0,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 8,
+            "Other": 4
+          },
+          "capped": 4
+        },
+        {
+          "t": 113,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 11,
+            "Other": 1
+          },
+          "capped": 1
+        },
+        {
+          "t": 226,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 339,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 10,
+            "Other": 2
+          },
+          "capped": 2
+        },
+        {
+          "t": 452,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 565,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 678,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 791,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 904,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 1017,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 1130,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 1243,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 1356,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 1469,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 1582,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 12,
+            "Other": 0
+          },
+          "capped": 0
+        }
+      ]
+    },
+    {
+      "name": "saved_muse_curve_recomputes",
+      "passed": true,
+      "run_id": "352516a7e5184bc6841d8eb075ecb09a",
+      "draws": 320,
+      "positions": 16,
+      "parameters": {
+        "variant": "mult",
+        "pen": 1.0,
+        "h": 128.0
+      },
+      "boundaries": [
+        {
+          "left": 347,
+          "right": 355,
+          "midpoint": 351.0
+        },
+        {
+          "left": 427,
+          "right": 435,
+          "midpoint": 431.0
+        }
+      ],
+      "max_numeric_error": 6.938893903907228e-18,
+      "retained_mass_min": 0.8373719091190739,
+      "retained_mass_max": 1.0,
+      "per_checkpoint": [
+        {
+          "t": 339,
+          "labels": {
+            "DECISION=LAUNCH": 1,
+            "DECISION=DELAY": 19,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 347,
+          "labels": {
+            "DECISION=LAUNCH": 1,
+            "DECISION=DELAY": 19,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 355,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 19,
+            "Other": 1
+          },
+          "capped": 1
+        },
+        {
+          "t": 363,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 20,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 371,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 19,
+            "Other": 1
+          },
+          "capped": 1
+        },
+        {
+          "t": 379,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 20,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 387,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 19,
+            "Other": 1
+          },
+          "capped": 1
+        },
+        {
+          "t": 395,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 20,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 403,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 19,
+            "Other": 1
+          },
+          "capped": 1
+        },
+        {
+          "t": 411,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 20,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 419,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 20,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 427,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 19,
+            "Other": 1
+          },
+          "capped": 1
+        },
+        {
+          "t": 435,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 20,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 443,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 20,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 451,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 20,
+            "Other": 0
+          },
+          "capped": 0
+        },
+        {
+          "t": 452,
+          "labels": {
+            "DECISION=LAUNCH": 0,
+            "DECISION=DELAY": 20,
+            "Other": 0
+          },
+          "capped": 0
+        }
+      ]
+    },
+    {
+      "name": "saved_refinement_exact_source_ids",
+      "passed": true,
+      "generated_tokens": 1693,
+      "prompt_tokens": 249
+    }
+  ]
+}

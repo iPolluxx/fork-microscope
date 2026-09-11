@@ -14,8 +14,8 @@ COMMIT="d32fed8d4162a4888291c4b3a38b059727c85a41"
 
 
 def check_upstream():
-    actual=subprocess.check_output(["git","-C",str(UPSTREAM),"rev-parse","HEAD"],text=True).strip()
-    if actual!=COMMIT: raise RuntimeError("Upstream revision differs from the tested pin. Run git submodule update --init.")
+    from upstream_snapshot import verify_upstream
+    verify_upstream(UPSTREAM, COMMIT)
 
 
 def doctor(muse=False):
@@ -86,21 +86,50 @@ def verify():
     subprocess.run([sys.executable,"-m","pytest",str(UPSTREAM/"otrecon/tests"),str(UPSTREAM/"forking_paths/tests"),"-q"],check=True)
 
 
+
+def connect(dashboard_origin, port=8767):
+    """Start a loopback worker and show the credentials needed by a hosted dashboard."""
+    from worker_connection import normalize_origin, WorkerAccess
+    import secrets
+    origin=normalize_origin(dashboard_origin)
+    if not 1 <= port <= 65535:raise ValueError('Port must be between 1 and 65535.')
+    check_upstream()
+    token=os.environ.get('FORK_WORKER_TOKEN') or secrets.token_urlsafe(32)
+    WorkerAccess('127.0.0.1', token, [origin])
+    os.environ['FORK_WORKER_TOKEN']=token
+    print(f"Dashboard: {origin}",flush=True)
+    print(f"Worker URL: http://127.0.0.1:{port}",flush=True)
+    print(f"Worker access token: {token}",flush=True)
+    print("Paste these into Connect worker. Keep this terminal running. Treat the token as a password.",flush=True)
+    print("For a VM, forward this port over SSH to your browser's computer. No model is loaded by this command.",flush=True)
+    import microscope_server
+    sys.argv=[sys.argv[0],'--port',str(port),'--host','127.0.0.1','--allow-origin',origin]
+    microscope_server.main()
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest="command",required=True)
     p=sub.add_parser("doctor");p.add_argument("--muse",action="store_true")
-    p=sub.add_parser("serve");p.add_argument("--port",type=int,default=8766)
+    p=sub.add_parser("serve");p.add_argument("--port",type=int,default=8766);p.add_argument("--host",default="127.0.0.1");p.add_argument("--allow-origin",action="append",default=[])
+    p=sub.add_parser("connect",help="Start a personal worker and print hosted-dashboard connection details");p.add_argument("--dashboard-origin",required=True);p.add_argument("--port",type=int,default=8767)
     p=sub.add_parser("run");p.add_argument("config");p.add_argument("--prepare-only",action="store_true")
+    p=sub.add_parser("refine");p.add_argument("bundle")
     sub.add_parser("verify-upstream")
     args=parser.parse_args()
     if args.command=="doctor":doctor(args.muse)
     elif args.command=="verify-upstream":verify()
+    elif args.command=="connect":connect(args.dashboard_origin,args.port)
     elif args.command=="run":run(args.config,args.prepare_only)
+    elif args.command=="refine":
+        check_upstream()
+        from refinement import run_bundle
+        run_bundle(args.bundle)
     else:
         check_upstream()
         import microscope_server
-        sys.argv=[sys.argv[0],"--port",str(args.port)]
+        sys.argv=[sys.argv[0],"--port",str(args.port),"--host",args.host]
+        for origin in args.allow_origin:sys.argv.extend(["--allow-origin",origin])
         microscope_server.main()
 
 

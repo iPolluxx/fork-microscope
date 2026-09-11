@@ -66,3 +66,35 @@ def test_anticipation_profile_keeps_prompt_and_pilot_separate():
     assert grid_plan(config['run'],2047)['pass_1']==[0,64,128]
     assert config['run']['passes'][0]['samples']==5
     assert config['run']['cont_max']==2048 and not config['run']['dense']
+
+
+def test_connect_creates_token_and_keeps_worker_on_loopback(monkeypatch,capsys):
+    import os, sys, fork_cli, microscope_server
+    from worker_connection import WorkerAccess
+    monkeypatch.delenv('FORK_WORKER_TOKEN',raising=False)
+    monkeypatch.setattr(fork_cli,'check_upstream',lambda:None)
+    monkeypatch.setattr(sys,'argv',['fork-microscope'])
+    calls=[]
+    monkeypatch.setattr(microscope_server,'main',lambda:calls.append(list(sys.argv)))
+    fork_cli.connect('https://dashboard.example.org/',8790)
+    token=os.environ['FORK_WORKER_TOKEN']
+    access=WorkerAccess('127.0.0.1',token,['https://dashboard.example.org'])
+    assert access.authorize('127.0.0.1:8790','https://dashboard.example.org','Bearer '+token,8790)
+    assert calls==[['fork-microscope','--port','8790','--host','127.0.0.1','--allow-origin','https://dashboard.example.org']]
+    output=capsys.readouterr().out
+    assert 'Worker URL: http://127.0.0.1:8790' in output and token in output
+    assert 'No model is loaded' in output
+
+
+def test_connect_preserves_existing_token_and_rejects_bad_origin(monkeypatch,capsys):
+    import os,sys,fork_cli,microscope_server
+    token='fixture-token-for-test-only-0000000000'
+    monkeypatch.setenv('FORK_WORKER_TOKEN',token)
+    monkeypatch.setattr(fork_cli,'check_upstream',lambda:None)
+    monkeypatch.setattr(microscope_server,'main',lambda:None)
+    monkeypatch.setattr(sys,'argv',['fork-microscope'])
+    fork_cli.connect('https://dashboard.example.org')
+    assert os.environ['FORK_WORKER_TOKEN']==token
+    capsys.readouterr()
+    with pytest.raises(ValueError):fork_cli.connect('https://dashboard.example.org/secret-path')
+    assert capsys.readouterr().out==''

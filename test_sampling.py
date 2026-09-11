@@ -106,7 +106,7 @@ def test_multibranch_collection_roundtrip(tmp_path,monkeypatch,custom_answers):
         assert all(b['observations'][0]['full_response_text'] for b in rec['branches'])
 
 
-def test_dashboard_module_is_served_and_root_opens_live_workspace():
+def test_dashboard_module_is_served_and_root_opens_prompt_workspace():
     import threading
     import urllib.request
     from http.server import ThreadingHTTPServer
@@ -118,6 +118,9 @@ def test_dashboard_module_is_served_and_root_opens_live_workspace():
         with urllib.request.urlopen(url+'/passes.mjs') as response:
             assert response.status==200 and b'export function newPass' in response.read()
         with urllib.request.urlopen(url+'/') as response:
+            html=response.read()
+            assert b'workspace.mjs' in html and b'worker-connection.js' in html
+        with urllib.request.urlopen(url+'/live.html') as response:
             html=response.read()
             assert b'id="add-pass"' in html and b'id="continuations"' in html
         request=urllib.request.Request(url+'/api/live/run',data=b'{}',headers={'Content-Type':'application/json','Origin':url})

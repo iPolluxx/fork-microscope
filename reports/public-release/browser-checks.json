@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "checks": [
+    "workspace.html",
+    "live.html",
+    "observatory.html?run=352516a7e5184bc6841d8eb075ecb09a",
+    "compare.html"
+  ],
+  "errors": [],
+  "notes": [
+    "Shared attribution on all four primary views",
+    "Recorded upstream revision on real saved evidence",
+    "No personal default model",
+    "Reference preset available; compute disabled without matching model",
+    "Mobile widths fit",
+    "Private filesystem paths return 404"
+  ]
+}

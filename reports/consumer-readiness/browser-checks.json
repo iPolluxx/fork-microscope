@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "errors": [],
+  "mutations": [
+    "/api/live/refinement-plan",
+    "/api/live/import"
+  ],
+  "checks": [
+    "actual saved counts",
+    "candidate tighter grid exact endpoints",
+    "export saved1693tokenIDs",
+    "invalidinterval blocks",
+    "source model pin and return link",
+    "CPU Muse guard",
+    "malformedJSON rejected",
+    "idempotent archive import",
+    "mobile expandedrefinement nooverflow"
+  ]
+}

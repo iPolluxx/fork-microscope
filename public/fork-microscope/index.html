@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="/styles.css">
   <script src="/plotly.min.js" defer></script>
   <script type="module" src="/app.js"></script>
+<script src="worker-connection.js"></script>
+<script src="/method-credit.js"></script>
 </head>
 <body>
   <header class="topbar"><div><h1>Fork microscope</h1><span class="subtitle">Legacy two-pass replay</span></div><div class="header-actions"><a href="/live.html" style="color:white">Attach a model →</a><span class="local-status"><i></i> Recorded data · local</span><button id="reset" type="button">Reset settings</button></div></header>
@@ -41,4 +43,4 @@
       <details class="method-panel"><summary>How these estimates work</summary><div class="method-copy"><p>For each selected position, the calculator uses the recorded continuation lengths, weighted by the probabilities of the retained next-token branches. It multiplies their expected length by your sample count, then adds the two passes. The baseline samples every token in the same selected region at the same sample count.</p><p>The two grids are paired so neither gets an extra checkpoint at the end. Their readouts are fitted separately; one pass never replaces a detection or observation from the other. Fits use Forking Fast’s segment-kernel estimator with fixed penalty 64 and bandwidth 32.</p><p>The gray reference includes the recorded draws used by the smaller samples. It is not independent ground truth or a confidence bound. Changing the region does not change the already-recorded continuation length cap. All five outcome categories remain available.</p><p>A smaller token allowance does not establish matched-accuracy savings or measured runtime savings. Model loading, base generation, prefix processing, padding, answer extraction and CPU reconstruction are excluded. Optional time and dollar estimates use only the throughput and rate you enter.</p><p>Source: Forking Fast’s released Llama-3-8B-Instruct outcomes, 100 tinyMMLU questions, revision <code>d32fed8</code>. No model is loaded and no paid generation occurs here.</p></div></details>
     </section>
   </main>
-</body></html>
+<script>addEventListener('worker-connection-change', () => location.reload());</script></body></html>

@@ -6,12 +6,35 @@ const $=id=>document.getElementById(id),num=id=>$(id).value.trim()===''?NaN:Numb
 let resultRevision=0,baseFormDirty=false;
 let state=null,result=null,budget=null,estimateTimer,estimateRevision=0,lastBaseSignature='',lastResultId='';
 let passes=[newPass()],activePass=passes[0].id;
+let runtimeConnected=false,setupStep='model',setupInitialized=false,budgetIssue='';
+let modelInspection=null,inspectionSignature='',inspectionBusy=false,inspectionEpoch=0;
+const modelPayload=()=>({model_id:$('model-id').value.trim(),revision:$('revision').value.trim(),device:$('device').value,batch_size:num('batch')});
+const modelSignature=()=>JSON.stringify(modelPayload());
 const fmt=n=>new Intl.NumberFormat('en-US',{maximumFractionDigits:0}).format(n);
 const fields=['cont-cap','temperature','top-k','threshold','dense','reference-samples','tuning'];
 function config(){return {passes:passes.map(p=>({...p})),cont_max:num('cont-cap'),temperature:num('temperature'),top_k:num('top-k'),threshold:num('threshold'),dense:$('dense').checked,reference_samples:num('reference-samples'),tuning:$('tuning').value};}
-function error(text=''){$('error').hidden=!text;$('error').textContent=text;}
-async function api(path,payload){const response=await fetch('/api/live/'+path,payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const value=await response.json();if(!response.ok)throw new Error(value.error||'The runtime request failed.');return value;}
-function queueEstimate(){budget=null;money();clearTimeout(estimateTimer);estimateRevision++;estimateTimer=setTimeout(estimate,250);}
+function error(text=''){$('error').hidden=!text;$('error').textContent=text;if(text&&state?.job.status==='error'){$('connection-fix').hidden=false;$('connection-advice').textContent=connectionAdvice(text);}}
+function connectionAdvice(message=''){
+  if(!runtimeConnected)return 'Start the Fork Microscope app on your machine or GPU VM, then reopen its app URL or restore your SSH port forwarding. Saved runs need their host to be reachable. Retry when the runtime is available.';
+  if(/out of memory|cuda.*memory/i.test(message))return 'The model or continuation batch does not fit this runtime. Try one concurrent continuation, a shorter context, or a compatible model that fits the available GPU memory.';
+  if(/401|403|gated|unauthorized|token|access denied/i.test(message))return 'The runtime could not access the model. Check model permissions and Hugging Face authentication on the machine running the app. Do not put credentials in the model ID field.';
+  if(/cuda|gpu/i.test(message))return 'Check that the app is running on your intended GPU machine and that CUDA is available there. A browser on your laptop does not move the model to a remote GPU.';
+  if(/revision|not found|model type|architecture|unrecognized|safetensor/i.test(message))return 'Check the model ID, revision and compatibility with this runtime. Model revision and hardware settings are available in step 1.';
+  return 'Review the runtime message above. Check the model settings or restart the app on its host, then retry. Your saved run files are not changed by reconnecting.';
+}
+function showSetupStep(step,{focus=false}={}){
+  setupStep=step;setupInitialized=true;
+  for(const section of document.querySelectorAll('[data-setup-step]'))section.hidden=section.dataset.setupStep!==step;
+  for(const button of document.querySelectorAll('[data-step]')){if(button.dataset.step===step)button.setAttribute('aria-current','step');else button.removeAttribute('aria-current');}
+  if(focus)document.querySelector(`[data-setup-step="${step}"]`).scrollIntoView({block:'start',behavior:'auto'});
+}
+function observatoryRoute(id){const href='/observatory.html'+(id?'?run='+encodeURIComponent(id):'');$('observatory-link').href=href;document.querySelector('.brand').href=href;}
+$('runtime-address').textContent=location.host;
+for(const button of document.querySelectorAll('[data-step]'))button.onclick=()=>showSetupStep(button.dataset.step);
+$('to-prompt').onclick=()=>showSetupStep('prompt',{focus:true});$('to-scan').onclick=()=>showSetupStep('scan',{focus:true});
+$('retry-runtime').onclick=()=>refresh().then(()=>error()).catch(e=>error(e.message));
+async function api(path,payload){let response;try{response=await (window.workerFetch||window.fetch.bind(window))('/api/live/'+path,payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}catch{throw new Error('Cannot reach the app runtime. Check its connection and retry.');}let value;try{value=await response.json();}catch{throw new Error('This address did not return the app runtime. Check the forwarded app port and retry.');}if(!response.ok)throw new Error(value.error||'The runtime request failed.');return value;}
+function queueEstimate(){budget=null;budgetIssue='';money();actions();clearTimeout(estimateTimer);estimateRevision++;estimateTimer=setTimeout(estimate,250);}
 function renderPasses(){
   $('pass-tabs').replaceChildren();
   for(const p of passes){const b=document.createElement('button');b.type='button';b.role='tab';b.id='tab-'+p.id;b.textContent=p.label;b.setAttribute('aria-selected',String(p.id===activePass));b.setAttribute('aria-controls','pass-details');b.tabIndex=p.id===activePass?0:-1;
@@ -19,9 +42,11 @@ function renderPasses(){
     b.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();let i=passes.findIndex(x=>x.id===activePass);i=e.key==='Home'?0:e.key==='End'?passes.length-1:(i+(e.key==='ArrowRight'?1:-1)+passes.length)%passes.length;activePass=passes[i].id;renderPasses();$('tab-'+activePass).focus();}};
     $('pass-tabs').append(b);}
   const p=passes.find(x=>x.id===activePass),details=$('pass-details');details.replaceChildren();details.setAttribute('aria-labelledby','tab-'+p.id);
+  const advanced=document.createElement('details'),summary=document.createElement('summary'),advancedFields=document.createElement('div');summary.textContent='Pass name, offset & random seed';advancedFields.className='pass-advanced-fields';advanced.append(summary,advancedFields);
   for(const [key,label,min,max]of [['label','Pass name'],['samples','Total draws per checkpoint',5,512],['start','Region first token',0,4095],['end','Region last token',0,4095],['stride','Checkpoint spacing',1,128],['offset','Offset from region start',0,127],['seed','Pass random seed',0,2147483647]]){
     const wrap=document.createElement('label');wrap.textContent=label;const input=document.createElement('input');input.id='pass-'+key;input.type=key==='label'?'text':'number';if(min!==undefined){input.min=min;input.max=max;}input.value=p[key];if(key==='label')input.maxLength=80;
-    input.oninput=()=>{p[key]=key==='label'?input.value:(input.value.trim()===''?NaN:Number(input.value));if(key==='label')$('tab-'+p.id).textContent=input.value||'Unnamed pass';queueEstimate();};wrap.append(input);details.append(wrap);}
+    input.oninput=()=>{p[key]=key==='label'?input.value:(input.value.trim()===''?NaN:Number(input.value));if(key==='label')$('tab-'+p.id).textContent=input.value||'Unnamed pass';queueEstimate();};wrap.append(input);(['label','offset','seed'].includes(key)?advancedFields:details).append(wrap);}
+  details.append(advanced);
   const remove=document.createElement('button');remove.textContent='Remove pass';remove.id='remove-pass';remove.className='secondary';remove.disabled=passes.length===1;remove.onclick=()=>{passes=passes.filter(x=>x.id!==p.id);activePass=passes[0].id;renderPasses();queueEstimate();};details.append(remove);actions();
 }
 $('add-pass').onclick=()=>{const p=newPass(passes);passes.push(p);activePass=p.id;renderPasses();queueEstimate();};
@@ -34,19 +59,43 @@ function money(){
 }
 async function estimate(){
   const version=++estimateRevision;$('temperature-notice').hidden=num('temperature')===1;
-  if(!state?.base||state.job.status==='running')return;
-  try{const v=await api('estimate',config());if(version!==estimateRevision)return;budget=v;$('budget').replaceChildren();
+  if(!runtimeConnected||!state?.base||state.job.status==='running')return;
+  try{const v=await api('estimate',config());if(version!==estimateRevision)return;budget=v;budgetIssue='';$('budget').replaceChildren();
     const lines=v.passes.map(p=>`${p.label}: ${p.positions.length} checkpoints × ${p.samples} draws = ${fmt(p.positions.length*p.samples)} continuations.`);
     lines.push(`${v.unique_checkpoints} distinct checkpoints; ${v.sampled_checkpoint_visits} visits including overlaps.`,`Independent reference: ${fmt(v.reference_rollouts)} additional continuations.`,`Total: ${fmt(v.total_rollouts)} draws, at most ${fmt(v.max_continuation_tokens)} generated continuation tokens.`,`Fewer samples is not evidence of savings at comparable accuracy.`);
-    for(const text of lines){const p=document.createElement('div');p.textContent=text;$('budget').append(p);}money();
-  }catch(e){if(version!==estimateRevision)return;budget=null;$('budget').textContent=e.message;money();}
+    for(const text of lines){const p=document.createElement('div');p.textContent=text;$('budget').append(p);}money();actions();
+  }catch(e){if(version!==estimateRevision)return;budget=null;budgetIssue=e.message;$('budget').textContent=e.message;money();actions();}
 }
-function actions(){const busy=state?.job.status==='running';$('load').disabled=busy;$('unload').disabled=busy||!state?.model;$('base').disabled=busy||!state?.model;$('run').disabled=busy||!state?.base||baseFormDirty;$('base-stale').hidden=!baseFormDirty||!state?.base;$('stop').disabled=!busy;
-  for(const id of [...fields,'seed','model-id','revision','device','batch','question','answers','mode','base-cap'])$(id).disabled=busy;
+function hardwareReadiness(){
+  const hardware=state?.runtime,device=$('device').value,model=$('model-id').value.trim();
+  if(!runtimeConnected)return {blocked:false,summary:'Hardware details will appear when the runtime reconnects.',message:''};
+  if(typeof hardware?.cuda_available!=='boolean')return {blocked:false,summary:'Hardware information is unavailable from this runtime.',message:'Hardware compatibility is unverified. Check the worker’s GPU and memory before loading a large model.'};
+  const memory=Number.isFinite(hardware.system_memory_gb)?` · ${hardware.system_memory_gb.toFixed(1)} GB system memory`:'';
+  const summary=hardware.cuda_available?`CUDA GPU: ${hardware.gpu_name||'available'}${memory}`:`CPU runtime${memory} · No CUDA GPU detected`;
+  if(!hardware.cuda_available&&device==='cuda')return {blocked:true,summary,message:'This runtime has no CUDA GPU. Open this app on a GPU worker, or choose CPU in advanced settings for a compatible smaller model.'};
+  return {blocked:false,summary,message:!hardware.cuda_available?'CPU generation can be slow. Choose a model that fits this machine’s system memory.':'GPU detected. Available memory and model compatibility still need to support your selected model.'};
+}
+function actions(){const busy=state?.job.status==='running',modelReady=runtimeConnected&&!!state?.model,baseReady=modelReady&&!!state?.base,hardware=hardwareReadiness();
+  $('runtime-hardware').textContent=hardware.summary;$('hardware-warning').textContent=hardware.message;$('hardware-warning').hidden=!hardware.message;$('hardware-warning').classList.toggle('blocked',hardware.blocked);
+  $('load').disabled=busy||inspectionBusy||!runtimeConnected||hardware.blocked||!modelInspection?.can_load||inspectionSignature!==modelSignature();$('inspect-model').disabled=busy||inspectionBusy||!runtimeConnected||!$('model-id').value.trim()||!$('revision').value.trim();$('model-source').disabled=busy||inspectionBusy;$('unload').disabled=busy||!modelReady;$('base').disabled=busy||!modelReady;$('run').disabled=busy||!baseReady||baseFormDirty||!budget;$('base-stale').hidden=!baseFormDirty||!state?.base;$('stop').disabled=!busy||!runtimeConnected;
+  for(const id of [...fields,'seed','model-id','revision','device','batch','question','answers','mode','base-cap'])$(id).disabled=busy||(inspectionBusy&&['model-id','revision','device','batch'].includes(id));
   $('add-pass').disabled=busy||passes.length>=8;for(const el of $('pass-details').querySelectorAll('input,button'))el.disabled=busy||(el.id==='remove-pass'&&passes.length===1);
+  $('to-prompt').disabled=busy||!modelReady;$('to-scan').disabled=busy||!baseReady||baseFormDirty;
+  const wait=busy?'A job is running. Wait for it to finish or stop it above.':null;
+  $('load-help').textContent=inspectionBusy?'Inspecting configuration and tokenizer; model weights are not being loaded.':!runtimeConnected?'The runtime must be reachable before a model can load. Use Retry connection above.':wait||(hardware.blocked?hardware.message:modelInspection?.can_load&&inspectionSignature===modelSignature()?'Metadata checks passed. Load downloads missing weights and uses your worker’s memory.':modelReady?'A model is attached. Continue to your question, or inspect new settings to change models.':'Enter a model and inspect its requirements to enable loading.');
+  $('base-help').textContent=!modelReady?'Load a model in step 1 to generate a response.':wait||(baseReady&&!baseFormDirty?'Original response ready. Continue to scan settings.':'This creates the original response that your checkpoint scan will explore.');
+  $('run-help').textContent=!baseReady?'Generate an original response in step 2 before starting a scan.':wait||(baseFormDirty?'Your prompt or answer settings changed. Return to step 2 and generate a new response.':budgetIssue||(!budget?'Checking your scan settings and token allowance…':'Ready. Review the checkpoint count and maximum token allowance, then start the scan.'));
+  for(const [id,help]of [['load','load-help'],['base','base-help'],['run','run-help']])$(id).title=$(id).disabled?$(help).textContent:'';
+  $('step-model-state').textContent=modelReady?'Model ready':runtimeConnected?(hardware.blocked?'GPU worker needed':'Choose & load'):'Connect runtime';
+  $('step-prompt-state').textContent=baseReady&&!baseFormDirty?'Response ready':baseFormDirty&&baseReady?'Response needs update':'Prompt & answers';
+  $('step-scan-state').textContent=budget?`${fmt(budget.total_rollouts)} planned draws`:'Checkpoints & budget';
 }
 async function refresh(){
-  const before=state;state=await api('status');actions();$('phase').textContent=state.job.phase;$('progress').max=state.job.total||1;$('progress').value=state.job.completed||0;
+  const before=state,wasConnected=runtimeConnected;try{state=await api('status');runtimeConnected=true;}catch(e){runtimeConnected=false;$('connection-badge').textContent='Runtime unavailable';$('connection-badge').dataset.state='offline';$('phase').textContent='Connection lost — your runtime is not reachable.';$('connection-fix').hidden=false;$('connection-advice').textContent=connectionAdvice();actions();throw e;}
+  $('connection-badge').textContent=state.job.status==='running'?'Runtime working':'Runtime connected';$('connection-badge').dataset.state='ready';$('connection-fix').hidden=state.job.status!=='error';
+  if(!wasConnected&&state.job.status!=='error')error();if(!setupInitialized)showSetupStep(state.base?'scan':state.model?'prompt':'model');
+  actions();$('phase').textContent=state.job.phase;$('progress').max=state.job.total||1;$('progress').value=state.job.completed||0;if(state.job.status==='running'&&!state.job.total)$('progress').removeAttribute('value');
+  if(state.model&&state.model.resolved_revision!==before?.model?.resolved_revision&&!state.model.chat_template)$('mode').value='base';
   $('model-status').textContent=state.model?`${state.model.model_id} · ${state.model.device.toUpperCase()} · ${state.model.dtype} · ${fmt(state.model.parameters)} parameters`:'No model attached.';
   if(state.job.status==='error')error(state.job.phase);
   const signature=state.base?JSON.stringify([state.model?.resolved_revision,state.base.config,state.base.text]):'';
@@ -55,7 +104,7 @@ async function refresh(){
     $('base-tokens').textContent=state.base.tokens.map((token,i)=>`${i}\t${JSON.stringify(token)}\tP(top)=${state.base.top_token_probabilities?.[i]?.toFixed(6)??'not recorded'}`).join('\n');
     for(const p of passes){p.end=Math.min(state.base.length-1,31);p.start=0;p.stride=Math.min(p.stride,p.end);p.offset=Math.min(p.offset,Math.max(0,p.end-p.stride));}renderPasses();
   }else{$('base-text').textContent='No generated response yet.';$('base-tokens').textContent='No trace yet.';budget=null;$('budget').textContent='Generate a base response first.';money();}}
-  if(state.job.status==='complete'&&state.job.action==='base'&&before?.job.status==='running'){baseFormDirty=false;actions();}
+  if(state.job.status==='complete'&&state.job.action==='base'&&before?.job.status==='running'){baseFormDirty=false;actions();showSetupStep('scan',{focus:true});}
   if(state.job.status!=='running'&&(before?.job.status==='running'||changed))await estimate();
   if(state.job.result_id&&state.job.result_id!==lastResultId){lastResultId=state.job.result_id;await listRuns();$('runs').value=lastResultId;await loadResult(lastResultId);}return state;
 }
@@ -65,15 +114,33 @@ async function start(action,payload){error();const response=await api(action,pay
   if(action==='run'){for(const [key,id]of [['cont_max','cont-cap'],['temperature','temperature'],['top_k','top-k'],['threshold','threshold'],['reference_samples','reference-samples'],['tuning','tuning']])$(id).value=payload[key];$('dense').checked=payload.dense;if(payload.passes){passes=payload.passes.map(p=>({...p}));activePass=passes[0].id;renderPasses();}}
   await refresh();return response;}
 const bind=(id,fn)=>$(id).addEventListener('click',()=>Promise.resolve().then(fn).catch(e=>error(e.message)));
-bind('load',()=>start('load',{model_id:$('model-id').value.trim(),revision:$('revision').value.trim(),device:$('device').value,batch_size:num('batch')}));
+function invalidateInspection(){inspectionEpoch++;modelInspection=null;inspectionSignature='';$('model-inspection').hidden=true;actions();}
+function sourceHelp(){const local=$('model-source').value==='local';$('model-id-label').textContent=local?'Model directory on the worker':'Hugging Face model ID';$('model-id').placeholder=local?'/path/on/worker/model':'organization/model-name';$('revision-label').textContent=local?'Local identity (optional saved fingerprint)':'Revision or branch';$('model-source-help').textContent=local?'Use an existing directory with config, tokenizer and safetensors weights on the connected worker. File contents are fingerprinted at load.':'Use native Transformers safetensors weights. Gated or private repositories use Hugging Face authentication configured on your worker.';}
+$('model-source').addEventListener('change',()=>{$('model-id').value='';$('revision').value=$('model-source').value==='local'?'local':'main';sourceHelp();invalidateInspection();});
+for(const id of ['model-id','revision','device','batch'])$(id).addEventListener('input',()=>{if(id==='model-id'&&/^(?:[a-f0-9]{40}$|local-sha256:)/.test($('revision').value))$('revision').value=$('model-source').value==='local'?'local':'main';invalidateInspection();});
+bind('inspect-model',async()=>{
+  const epoch=++inspectionEpoch;inspectionBusy=true;modelInspection=null;inspectionSignature='';$('model-inspection').hidden=false;$('inspection-status').textContent='Reading configuration and tokenizer metadata…';$('inspection-facts').replaceChildren();$('inspection-blockers').replaceChildren();$('inspection-warnings').replaceChildren();actions();
+  try{const inspected=await api('model-preflight',modelPayload());if(epoch!==inspectionEpoch)return;
+    if(inspected.source_type!==$('model-source').value){inspected.can_load=false;inspected.blockers.push('The selected source does not match this model. Choose the matching source type and inspect again.');}
+    modelInspection=inspected;$('model-id').value=inspected.model_id;if(inspected.source_type==='hub'&&inspected.resolved_revision)$('revision').value=inspected.resolved_revision;inspectionSignature=modelSignature();
+    $('inspection-status').textContent=inspected.can_load?'Eligible native model · load to validate generation':'Attachment needs attention';$('model-inspection').dataset.state=inspected.can_load?'eligible':'blocked';
+    const memory=inspected.memory||{},facts=[['Architecture',inspected.architecture||'Unavailable'],['Prompt format',inspected.chat_template?'Chat or completion':'Completion; no chat template'],['Context limit',inspected.context_limit?fmt(inspected.context_limit)+' tokens':'Unavailable'],['Weight memory',Number.isFinite(memory.weights_gb)?memory.weights_gb.toFixed(1)+' GiB, before cache and overhead':'Not estimated'],['Identity',inspected.source_type==='local'?'Content fingerprint at load':(inspected.resolved_revision||'Unresolved').slice(0,12)]];
+    for(const [label,value] of facts){const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;$('inspection-facts').append(dt,dd);}
+    for(const [id,items]of [['inspection-blockers',inspected.blockers||[]],['inspection-warnings',[...(inspected.warnings||[]),...(memory.assumptions?[memory.assumptions]:[])]]])for(const text of items){const li=document.createElement('li');li.textContent=text;$(id).append(li);}
+    $('inspection-notes').open=!inspected.can_load;
+  }catch(e){if(epoch===inspectionEpoch){$('inspection-status').textContent='Inspection failed. Check the model and worker connection.';error(e.message);}}
+  finally{if(epoch===inspectionEpoch)inspectionBusy=false;actions();}
+});
+bind('load',()=>{if(!modelInspection?.can_load||inspectionSignature!==modelSignature())throw new Error('Inspect these model settings before loading.');return start('load',modelPayload());});
 bind('unload',()=>start('unload',{}));
 bind('base',()=>start('base',{prompt:$('question').value,answers:$('answers').value.split('\n').filter(x=>x.trim()),mode:$('mode').value,max_tokens:num('base-cap'),seed:num('seed')}));
-bind('run',()=>{if(baseFormDirty)throw new Error('Generate a new base for the changed prompt settings.');return start('run',config());});bind('stop',async()=>{await api('stop',{});$('phase').textContent='Stopping after the current operation…';});
+bind('run',()=>{if(baseFormDirty)throw new Error('Generate a new base for the changed prompt settings.');return start('run',config());});bind('stop',async()=>{if(!state?.job?.id)throw Error('No active job is selected.');await api('stop',{job_id:state.job.id});$('phase').textContent='Stopping after the current operation…';});
 for(const id of ['question','answers','mode','base-cap','seed'])$(id).addEventListener('input',()=>{baseFormDirty=true;actions();});
 for(const id of fields)$(id).addEventListener('input',queueEstimate);
 for(const id of ['throughput','rate'])$(id).addEventListener('input',money);
+for(const id of ['model-id','device'])$(id).addEventListener('input',actions);
 async function listRuns(){const list=await api('runs');const previous=$('runs').value;$('runs').replaceChildren(new Option('Select a completed run',''),...list.map(r=>new Option(`${new Date(r.created*1000).toLocaleString()} · ${r.model} · ${(r.prompt??'').slice(0,80)}`,r.id)));$('runs').value=previous;}
-async function loadResult(id){if(!id)return;const revision=++resultRevision;const loaded=await api('export?id='+encodeURIComponent(id));if(revision!==resultRevision)return;result=loaded;$('outcome').replaceChildren(...result.categories.map(x=>new Option(x,x)));$('outcome').selectedIndex=suggestedOutcome(resultPasses(result),result.categories.length);graphRange=null;$('show-reconstruction').checked=!resultPasses(result).every(p=>{const e=passEvidence(p,result.records?.[p.id],result.categories.length);return e.sparse&&e.constant;});$('viewer-outcome').replaceChildren(new Option('All outcomes',''),...result.categories.map(x=>new Option(x,x)));$('viewer-search').value='';$('viewer-status').value='';$('export').hidden=false;$('export').href='/api/live/export?id='+id;$('export').download='fork-run-'+id+'.json';await draw();
+async function loadResult(id){if(!id)return;const revision=++resultRevision;const loaded=await api('export?id='+encodeURIComponent(id));if(revision!==resultRevision)return;result=loaded;window.setForkMethodCredit?.(result);observatoryRoute(id);const route=new URL(location.href);route.searchParams.set('run',id);history.replaceState(null,'',route);$('outcome').replaceChildren(...result.categories.map(x=>new Option(x,x)));$('outcome').selectedIndex=suggestedOutcome(resultPasses(result),result.categories.length);graphRange=null;$('show-reconstruction').checked=!resultPasses(result).every(p=>{const e=passEvidence(p,result.records?.[p.id],result.categories.length);return e.sparse&&e.constant;});$('viewer-outcome').replaceChildren(new Option('All outcomes',''),...result.categories.map(x=>new Option(x,x)));$('viewer-search').value='';$('viewer-status').value='';$('export').hidden=false;$('export').href='#';$('export').onclick=async event=>{event.preventDefault();try{const data=await api('export?id='+encodeURIComponent(id)),url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='fork-run-'+id+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){error(e.message);}};$('export').download='fork-run-'+id+'.json';await draw();
   const ps=resultPasses(result);$('viewer-pass').replaceChildren(...ps.map(p=>new Option(p.label,p.id)),...(result.records?.dense?[new Option('Independent reference','dense')]:[]));viewerPositions();navigate('results');}
 $('runs').addEventListener('change',()=>loadResult($('runs').value).catch(e=>error(e.message)));
 for(const id of ['outcome','bands','observed-bands','show-reconstruction'])$(id).addEventListener('change',()=>draw().catch(e=>error(e.message)));
@@ -102,7 +169,7 @@ async function draw(){
   }
   $('bands').disabled=!$('show-reconstruction').checked;
   $('graph-summary').replaceChildren(...summaries.map(text=>{const p=document.createElement('p');p.textContent=text;return p;}));
-  await Plotly.react('live-plot',traces,{height:480,margin:{l:65,r:20,t:20,b:110},xaxis:{title:{text:'Response-token position'},...(graphRange?{range:graphRange}:{autorange:true})},yaxis:{title:{text:`Proportion: ${$('outcome').value}`},range:[-.04,1.04]},legend:{orientation:'h',y:-.22},shapes,paper_bgcolor:'#fff',plot_bgcolor:'#fff',hovermode:'closest',dragmode:'zoom',uirevision:result.id},{responsive:true,displaylogo:false,scrollZoom:false});
+  await Plotly.react('live-plot',traces,{height:480,margin:{l:65,r:20,t:20,b:110},xaxis:{title:{text:'Response-token position'},...(graphRange?{range:graphRange}:{autorange:true})},yaxis:{title:{text:`Proportion: ${$('outcome').value}`},range:[-.04,1.04]},legend:{orientation:'h',y:-.22},shapes,paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'#0b1725',font:{color:'#b9cce0'},hovermode:'closest',dragmode:'zoom',uirevision:result.id},{responsive:true,displaylogo:false,scrollZoom:false});
   const plot=$('live-plot');plot.removeAllListeners?.('plotly_click');plot.on?.('plotly_click',event=>{const point=event.points[0];if(!point.customdata)return;openCheckpoint(point.customdata[0],point.x);});
   renderIntervals();
   $('result-label').textContent=`${result.model.model_id} · ${result.schema_version===2?'all collected draws enter each fit':'legacy per-branch sampling'} · ${result.base.question.question}`;
@@ -145,7 +212,7 @@ $('interval-right').onclick=()=>{const v=selectedInterval();if(v)openCheckpoint(
 $('interval-zoom').onclick=()=>{const v=selectedInterval();if(!v)return;const padding=Math.max(2,(v.right-v.left)*.25);graphRange=[Math.max(0,v.left-padding),v.right+padding];Plotly.relayout('live-plot',{'xaxis.range':graphRange,'xaxis.autorange':false});};
 $('reset-zoom').onclick=()=>{graphRange=null;Plotly.relayout('live-plot',{'xaxis.autorange':true});};
 function navigate(view){
-  document.querySelector('.live-workspace').dataset.view=view;
+  document.querySelector('.live-workspace').dataset.view=view;$('scan-intro').hidden=view!=='setup';
   for(const el of document.querySelectorAll('.workspace-nav button')){
     if(el.dataset.view===view)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');
   }
@@ -214,4 +281,12 @@ function register(){const context=document.modelContext;if(!context?.registerToo
 }
 async function poll(){try{await refresh();}catch(e){error(e.message);}setTimeout(poll,1500);}
 renderPasses();await listRuns().catch(e=>error(e.message));await refresh().catch(e=>error(e.message));
-const requestedRun=new URLSearchParams(location.search).get('run');if(requestedRun){$('runs').value=requestedRun;await loadResult(requestedRun).catch(e=>error(e.message));}register();poll();
+const urlParams=new URLSearchParams(location.search),requestedRun=urlParams.get('run'),sourceRun=urlParams.get('source');
+if(sourceRun){try{const source=await api('result?id='+encodeURIComponent(sourceRun));$('model-id').value=source.model.model_id;$('model-source').value=source.model.source_type||(/^(?:\/|\.|~)/.test(source.model.model_id)?'local':'hub');sourceHelp();$('revision').value=source.model.resolved_revision||source.model.requested_revision||'main';$('source-model-note').hidden=false;$('source-model-note').textContent=`Continue from saved run ${sourceRun}. Load the same model and pinned revision shown below before refining its checkpoints. Nothing loads automatically.`;observatoryRoute(sourceRun);$('revision').closest('details').open=true;showSetupStep('model');actions();}catch(e){error('Could not read the source run: '+e.message);}}
+else if(requestedRun){$('runs').value=requestedRun;await loadResult(requestedRun).catch(e=>error(e.message));}
+if(urlParams.get('set')&&urlParams.get('prompt')){try{const saved=await api('prompt-sets'),set=saved.sets.find(item=>item.id===urlParams.get('set')),prompt=set?.prompts.find(item=>item.id===urlParams.get('prompt'));if(!prompt)throw new Error('This saved prompt is unavailable on the connected worker.');$('question').value=prompt.prompt;$('answers').value=prompt.answers.join('\n');$('mode').value=prompt.mode;$('base-cap').value=prompt.max_tokens;$('seed').value=prompt.seed;baseFormDirty=true;showSetupStep('prompt');navigate('setup');actions();}catch(e){error(e.message);}}
+if(urlParams.get('view')==='setup'||sourceRun)navigate('setup');sourceHelp();register();poll();
+window.addEventListener('worker-connection-change',async()=>{
+  inspectionEpoch++;inspectionBusy=false;modelInspection=null;inspectionSignature='';$('model-inspection').hidden=true;state=null;result=null;runtimeConnected=false;budget=null;budgetIssue='';lastBaseSignature='';lastResultId='';baseFormDirty=false;resultRevision++;estimateRevision++;$('runs').replaceChildren(new Option('Select a completed run',''));$('model-id').value='';$('revision').value='main';$('model-source').value='hub';$('source-model-note').hidden=true;$('budget').textContent='Attach a model and generate a response to configure a scan.';$('money').textContent='';$('base-text').textContent='No generated response yet.';$('base-tokens').textContent='No trace yet.';$('export').hidden=true;observatoryRoute(null);history.replaceState(null,'',location.pathname);sourceHelp();showSetupStep('model');navigate('setup');actions();
+  try{await listRuns();await refresh();}catch(e){error(e.message);}
+});

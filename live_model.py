@@ -7,12 +7,23 @@ from huggingface_hub import constants as hub_constants
 from transformers.utils.import_utils import is_env_variable_true
 from forking_paths.model import ForkingModel
 from forking_paths.prompts import format_mmlu_base, format_mmlu_instruct_user
+from model_preflight import model_location, local_model_identity, local_model_files, context_limit, validate_model_request
 
 
 class AttachedModel(ForkingModel):
     def __init__(self, model_id, revision="main", device="auto", gen_batch=4, progress=None):
         started = time.perf_counter()
         report = progress or (lambda phase: None)
+        validate_model_request(dict(model_id=model_id, revision=revision, device=device, batch_size=gen_batch))
+        source_type, model_id = model_location(model_id)
+        local_identity = None
+        local_stats = None
+        if source_type == 'local':
+            local_identity = local_model_identity(model_id, progress=report)
+            if revision.startswith('local-sha256:') and revision != local_identity:
+                raise ValueError('Local model contents differ from the saved source identity. Restore the exact model snapshot before replaying.')
+            local_stats = {str(p): (p.stat().st_size, p.stat().st_mtime_ns, p.stat().st_ino)
+                           for p in local_model_files(model_id)}
         report("Reading model configuration…")
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -21,10 +32,16 @@ class AttachedModel(ForkingModel):
         self.device, self.gen_batch, self.seed = device, gen_batch, 0
         self.enable_prefix_caching = False  # Ordinary generate caching; no cross-branch reuse claim.
         torch.set_num_threads(min(4, torch.get_num_threads()))
-        config = AutoConfig.from_pretrained(model_id, revision=revision, trust_remote_code=False)
+        config = AutoConfig.from_pretrained(model_id, revision=None if source_type == 'local' else revision, trust_remote_code=False)
         config_done = time.perf_counter()
+        if context_limit(config) is None:
+            raise ValueError('The model configuration does not declare a supported context limit.')
+        if getattr(config, 'quantization_config', None):
+            raise ValueError('Pre-quantized models are not supported by this full-weight adapter. Select native safetensors weights.')
         # Resolve mutable Hub refs once so tokenizer and weights use the same snapshot.
-        load_revision = getattr(config, "_commit_hash", None) or revision
+        load_revision = getattr(config, "_commit_hash", None) if source_type == 'hub' else None
+        if source_type == 'hub' and not load_revision:
+            raise ValueError('Could not pin the model to an immutable Hub revision. Inspect the model again before loading.')
         self.is_muse = config.model_type == "muse_glimmer"
         report("Loading tokenizer and chat template…")
         if self.is_muse:
@@ -39,6 +56,11 @@ class AttachedModel(ForkingModel):
         self.model = loader.from_pretrained(model_id, revision=load_revision, config=config,
             dtype=dtype, trust_remote_code=False, use_safetensors=True,
             device_map={"": device}).eval()
+        if local_stats is not None:
+            current = {str(p): (p.stat().st_size, p.stat().st_mtime_ns, p.stat().st_ino)
+                       for p in local_model_files(model_id)}
+            if current != local_stats:
+                raise ValueError('Local model files changed while loading. Retry with an unchanged snapshot.')
         if device == "cuda":
             torch.cuda.synchronize()
         weights_done = time.perf_counter()
@@ -59,11 +81,14 @@ class AttachedModel(ForkingModel):
             self.tokenizer.pad_token = self.tokenizer.eos_token
         self.tokenizer.padding_side = "left"
         self.info = dict(model_id=model_id, requested_revision=revision,
-            resolved_revision=getattr(self.model.config, "_commit_hash", None), device=device,
+            resolved_revision=local_identity or load_revision, device=device,
+            source_type=source_type, identity_kind='local_content_sha256' if local_identity else 'hub_commit',
             dtype=str(dtype), parameters=sum(p.numel() for p in self.model.parameters()),
-            context_limit=getattr(text_config, "max_position_embeddings", None),
+            context_limit=context_limit(self.model.config),
             vocab_size=text_config.vocab_size, architecture=type(self.model).__name__,
             chat_template=bool(self.tokenizer.chat_template), batch_size=gen_batch,
+            capabilities=dict(exact_tokens=True, next_token_logits=True, forced_prefix=True,
+                chat=bool(self.tokenizer.chat_template)),
             loading=dict(config_seconds=config_done-started,
                 tokenizer_seconds=tokenizer_done-config_done,
                 weights_seconds=weights_done-tokenizer_done,

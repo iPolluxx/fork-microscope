@@ -121,18 +121,38 @@ class Cancelled(Exception):
 
 
 class LiveService:
-    def __init__(self):
+    def __init__(self, workspace_root=None):
+        from workspace_store import WorkspaceStore
+        self.workspace = WorkspaceStore(workspace_root or ROOT / "workspace-data")
+        self.workspace.recover()
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.model = self.base = self.question = None
         self.job = dict(status="idle", phase="Attach an open-weight model to begin.", completed=0, total=0)
         self.base_config = None
+        self.lineage = None
+        self._runtime = None
         RUNS.mkdir(exist_ok=True)
+
+    def runtime_metadata(self):
+        if self._runtime is None:
+            import os
+            import torch
+            cuda = torch.cuda.is_available()
+            try:
+                memory = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / 1024**3
+            except (ValueError, OSError, AttributeError):
+                memory = None
+            self._runtime = dict(cuda_available=cuda,
+                gpu_name=torch.cuda.get_device_name(0) if cuda else None,
+                gpu_memory_gb=round(torch.cuda.get_device_properties(0).total_memory/1024**3,1) if cuda else None,
+                system_memory_gb=round(memory, 1) if memory is not None else None)
+        return dict(self._runtime)
 
     def status(self):
         with self.lock:
             return dict(job=dict(self.job), model=self.model.info if self.model else None,
-                base=self.base_metadata() if self.base else None)
+                base=self.base_metadata() if self.base else None, runtime=self.runtime_metadata())
 
     def base_metadata(self):
         return dict(question=self.question, text=self.model.decode(self.base.gen_ids),
@@ -152,7 +172,7 @@ class LiveService:
         with self.lock:
             if self.job["status"] == "running":
                 raise ValueError("A job is already running. Wait or stop it first.")
-            if action not in ("load", "base", "run", "unload"):
+            if action not in ("load", "base", "run", "unload", "refine", "batch"):
                 raise ValueError("Unknown action.")
             # Validate synchronously before launching jobs.
             if action == "load":
@@ -163,6 +183,9 @@ class LiveService:
                 if payload["device"] not in ("auto", "cpu", "cuda"):
                     raise ValueError("Choose auto, CPU or CUDA.")
                 integer(payload["batch_size"], "Batch size", 1, 128)
+                runtime = self.runtime_metadata()
+                if payload['device'] == 'cuda' and not runtime['cuda_available']:
+                    raise ValueError('No CUDA GPU is available on this runtime. Open the app on your GPU worker, or explicitly select CPU for a compatible smaller model.')
             elif action == "base":
                 if not self.model: raise ValueError("Attach a model first.")
                 if 'prompt' in payload:
@@ -179,6 +202,16 @@ class LiveService:
                 if payload["mode"] not in ("chat", "base"): raise ValueError("Choose chat or base mode.")
                 integer(payload["max_tokens"], "Base cap", 8, 4096)
                 integer(payload["seed"], "Seed", 0, 2**31-1)
+            elif action == "refine":
+                plan=self.refinement_plan(payload)
+                if not self.model:raise ValueError('Attach the source model in Technical controls first, or export this job for a GPU worker.')
+                from model_preflight import same_model_identity
+                if not same_model_identity(self.model.info,plan['model']):
+                    raise ValueError('Attach the exact source model revision before refining.')
+                payload=plan
+            elif action == "batch":
+                if not self.model: raise ValueError("Attach a model before starting a prompt set.")
+                payload=self.workspace.prepare_batch(payload,self.model.info)
             elif action == "run":
                 self.estimate(payload)  # Checks base, complete config and context allowance.
             else:
@@ -187,13 +220,23 @@ class LiveService:
             self.job = dict(id=uuid.uuid4().hex, status="running", action=action,
                 phase=f"Starting {action}…", completed=0,total=0, started=time.time())
             job_id = self.job["id"]
+            if action == "batch":
+                payload['job_id']=job_id
+                self.job['batch_id']=payload['id']
+                self.workspace.save_batch(payload)
             threading.Thread(target=self._execute, args=(action,payload), daemon=True).start()
-            return dict(job_id=job_id)
+            return dict(job_id=job_id, **({'batch_id':payload['id']} if action=='batch' else {}))
 
     def _execute(self, action, p):
         try:
+            if action == 'load':
+                from model_preflight import preflight_model
+                self.progress('Inspecting model metadata and worker memory…')
+                inspected=preflight_model(p,self.runtime_metadata())
+                if not inspected['can_load']:raise ValueError(' '.join(inspected['blockers']))
+                self.check()
             if action in ("unload", "load"):
-                self.base = self.question = self.base_config = None
+                self.base = self.question = self.base_config = self.lineage = None
                 self.model = None
                 gc.collect()
                 import torch
@@ -204,23 +247,88 @@ class LiveService:
                     self.model = AttachedModel(p["model_id"],p["revision"],p["device"],p["batch_size"],progress=self.progress)
                     self.check()
             elif action == "base":
-                self.progress("Generating the greedy base response and recording next-token probabilities…")
-                ids = (self.model.prompt_text(p['prompt'], p['mode']) if 'prompt' in p
-                    else self.model.prompt(p["question"], p["choices"], p["mode"]))
-                self.context_check(len(ids)+p["max_tokens"])
-                base = self.model.base_path(ids, p["max_tokens"], top_k=min(50,self.model.info["vocab_size"]), seed=p["seed"])
+                self.generate_base(p)
+            elif action == "batch":
+                self.execute_batch(p)
+            elif action == "refine":
+                from replay_trace import replay_saved_trace
+                self.base=self.question=self.base_config=None
+                self.lineage=None
+                base=replay_saved_trace(self.model,p['base'],p['model'],progress=self.progress)
                 self.check()
-                if len(base.gen_ids) < 2: raise ValueError("The model produced fewer than two response tokens. Try another question.")
-                self.base,self.question,self.base_config = base,(dict(question=p['prompt'],answers=p['answers'],matching='answer_text_anywhere_v1') if 'prompt' in p else dict(question=p['question'],choices=p['choices'])),p
+                self.base=base;self.base_config=p['base_config']
+                self.question=(dict(question=self.base_config['prompt'],answers=self.base_config['answers'],matching='answer_text_anywhere_v1') if 'prompt' in self.base_config else dict(question=self.base_config['question'],choices=self.base_config['choices']))
+                self.lineage=dict(p['lineage'],exact_ids_verified=True)
+                self.collect(p['run'])
             else:
                 self.collect(p)
             with self.lock:
                 self.job.update(status="complete",phase=f"{action.capitalize()} complete",finished=time.time())
-                if action == "run": self.job["completed"]=self.job["total"]
+                if action in ("run","refine"): self.job["completed"]=self.job["total"]
         except Cancelled:
             with self.lock: self.job.update(status="cancelled",phase="Stopped at a sampling boundary. Any saved partial collection is retained.",finished=time.time())
         except Exception as exc:
             with self.lock: self.job.update(status="error",phase=str(exc)[:1500],finished=time.time())
+
+    def generate_base(self, p):
+        self.lineage = None
+        self.base = self.question = self.base_config = None
+        self.progress("Generating the greedy base response and recording next-token probabilities…")
+        ids = (self.model.prompt_text(p['prompt'], p['mode']) if 'prompt' in p
+            else self.model.prompt(p["question"],p["choices"],p["mode"]))
+        self.context_check(len(ids)+p['max_tokens'])
+        base=self.model.base_path(ids,p['max_tokens'],top_k=min(50,self.model.info['vocab_size']),seed=p['seed'])
+        self.check()
+        if len(base.gen_ids)<2: raise ValueError('The model produced fewer than two response tokens. Try another prompt.')
+        self.base,self.question,self.base_config=base,(dict(question=p['prompt'],answers=p['answers'],matching='answer_text_anywhere_v1') if 'prompt' in p else dict(question=p['question'],choices=p['choices'])),p
+
+    def execute_batch(self, batch):
+        from workspace_store import scan_config
+        batch['state']='running';self.workspace.save_batch(batch)
+        try:
+            for index,item in enumerate(batch['items']):
+                self.check()
+                item['state']='running';item['started_at']=time.time()
+                self.workspace.save_batch(batch)
+                with self.lock:
+                    self.job.update(batch_item=index+1,batch_size=len(batch['items']),prompt_title=item['title'])
+                    self.job.pop('result_id',None)
+                try:
+                    p={k:v for k,v in item['prompt_snapshot'].items() if k not in ('id','title')}
+                    self.generate_base(p)
+                    self.check()
+                    config=scan_config(batch['scan'],len(self.base.gen_ids)-1)
+                    self.estimate(config)
+                    self.lineage=dict(batch_id=batch['id'],prompt_set_id=batch['set_id'],
+                        prompt_set_revision=batch['set_revision'],prompt_id=item['prompt_id'])
+                    item['run_id']=uuid.uuid4().hex
+                    self.workspace.save_batch(batch)
+                    self.collect(config,run_id=item['run_id'])
+                    item['state']='complete'
+                except Cancelled:
+                    item['state']='cancelled';raise
+                except Exception as exc:
+                    item['state']='error';item['error']=str(exc)[:1500]
+                finally:
+                    item['finished_at']=time.time();self.workspace.save_batch(batch)
+            batch['state']='complete' if all(i['state']=='complete' for i in batch['items']) else 'complete_with_errors'
+            if batch['state']=='complete_with_errors':
+                raise ValueError('Batch finished with item errors. Open Workspace to inspect completed runs and failed prompts.')
+        except Cancelled:
+            batch['state']='cancelled'
+            for item in batch['items']:
+                if item['state']=='pending':item['state']='cancelled'
+            raise
+        finally:
+            self.workspace.save_batch(batch)
+
+    def refinement_plan(self, request):
+        from refinement import build_plan
+        if type(request) is not dict:raise ValueError('Expected refinement settings.')
+        result=self.result(request.get('source_run_id',''),raw=True)
+        record=result['records'].get(request.get('source_pass_id'))
+        if not record:raise ValueError('Source observation record is unavailable.')
+        return build_plan(result,record,request)
 
     def context_check(self, needed):
         limit = self.model.info["context_limit"]
@@ -266,14 +374,14 @@ class LiveService:
             base_text=self.model.decode(self.base.gen_ids),token_texts=[self.model.tokenizer.decode([x]) for x in self.base.gen_ids],
             finish_reason=self.base.finish_reason),config=cfg.to_dict(),branches=[])
 
-    def collect(self, c):
+    def collect(self, c, run_id=None):
         from outcome_readout import inspect_continuation
         estimate = self.estimate(c)
         cfg = self.configuration(c)
-        run_id = self.job['id']; folder = RUNS/run_id; folder.mkdir()
+        run_id = run_id or self.job['id']; folder = RUNS/run_id; folder.mkdir()
         records,curves,phase_costs = {},{},{}
         done=0; total=estimate['total_rollouts']
-        metadata = dict(id=run_id,schema_version=2,sampling_design='position_mixture_v1',model=self.model.info,
+        metadata = dict(lineage=self.lineage,id=run_id,schema_version=2,sampling_design='position_mixture_v1',model=self.model.info,
             settings=c,base_config=self.base_config,estimate=estimate,created=time.time(),
             upstream_commit='d32fed8d4162a4888291c4b3a38b059727c85a41',
             generation_defaults=self.model.model.generation_config.to_dict(),
@@ -347,23 +455,39 @@ class LiveService:
         temp.write_text(json.dumps(data,allow_nan=False),encoding="utf-8")
         temp.replace(path)
 
-    def cancel(self):
-        self.stop.set()
-        return {"stopping":self.job["status"]=="running"}
+    def cancel(self, expected_job_id=None):
+        with self.lock:
+            if expected_job_id is not None and self.job.get('id') != expected_job_id:
+                raise ValueError('This is no longer the active job. No other job was stopped.')
+            self.stop.set()
+            return {"stopping":self.job["status"]=="running"}
 
     def results(self):
         entries=[]
         for file in sorted(RUNS.glob("*/result.json"),key=lambda p:p.stat().st_mtime,reverse=True)[:100]:
-            value=json.loads((file.parent/"manifest.json").read_text())
-            entries.append(dict(id=value["id"],model=value["model"]["model_id"],created=value["created"],prompt=value.get("base_config",{}).get("prompt",value.get("base_config",{}).get("question",""))))
+            if file.parent.name.startswith('.'): continue
+            try:
+                value=json.loads((file.parent/"manifest.json").read_text())
+                entries.append(dict(id=value["id"],model=value["model"]["model_id"],created=value["created"],prompt=value.get("base_config",{}).get("prompt",value.get("base_config",{}).get("question",""))))
+            except (OSError, ValueError, KeyError, TypeError):
+                # One interrupted or damaged archive must not hide every valid run.
+                continue
         return entries
+
+    def import_result(self, value):
+        from evidence_io import import_export
+        with self.lock:
+            return import_export(value, RUNS)
 
     def result(self, run_id, raw=False):
         if len(run_id)!=32 or any(x not in "0123456789abcdef" for x in run_id): raise ValueError("Invalid run ID.")
         folder=RUNS/run_id
         file=folder/"result.json"
         if not file.exists(): raise ValueError("No completed result exists for this run.")
-        result=json.loads(file.read_text())
-        if raw:
-            result["records"]={p.stem:json.loads(p.read_text()) for p in folder.glob("*.json") if p.stem not in ("result","manifest")}
+        try:
+            result=json.loads(file.read_text())
+            if raw:
+                result["records"]={p.stem:json.loads(p.read_text()) for p in folder.glob("*.json") if p.stem not in ("result","manifest")}
+        except (OSError, ValueError) as exc:
+            raise ValueError("This saved run could not be read. Restore it from an evidence export or backup.") from exc
         return result

@@ -1,0 +1,25 @@
+{
+  "/workspace.html": 200,
+  "/live.html": 200,
+  "/observatory.html": 200,
+  "/compare.html": 200,
+  "/worker-connection.js": 200,
+  "unauthorized_api": 401,
+  "allowed_origin": "http://127.0.0.1:8791",
+  "status": {
+    "job": {
+      "status": "idle",
+      "phase": "Attach an open-weight model to begin.",
+      "completed": 0,
+      "total": 0
+    },
+    "model": null,
+    "base": null,
+    "runtime": {
+      "cuda_available": false,
+      "gpu_name": null,
+      "gpu_memory_gb": null,
+      "system_memory_gb": 15.5
+    }
+  }
+}

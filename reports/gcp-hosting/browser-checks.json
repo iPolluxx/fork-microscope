@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "url": "https://fork-microscope-wzyjs4vwsq-uc.a.run.app",
+  "pages": [
+    "/",
+    "/live.html",
+    "/observatory.html",
+    "/compare.html"
+  ],
+  "errors": [],
+  "checks": [
+    "public pages without Google login",
+    "no automatic worker or model connection",
+    "worker dialog includes actual public origin",
+    "desktop and mobile views",
+    "private paths and worker API absent"
+  ]
+}

@@ -15,3 +15,21 @@ outputs/
 *.pem
 *.key
 !configs/*.json
+
+workspace-data/
+
+# Local AI-tool configuration
+.agents/
+.codex/
+.claude/
+.impeccable/
+
+# Internal planning material, not part of the release
+reports/vision-2026-09-09/
+
+# Local registry and machine credentials
+.npmrc
+.pypirc
+.netrc
+.ssh/
+.aws/

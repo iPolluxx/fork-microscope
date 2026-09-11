@@ -19,4 +19,4 @@ uv pip install --python .venv/bin/python --no-deps \
   ./vendor/forking-fast/otrecon ./vendor/forking-fast/forking_paths
 uv pip install --python .venv/bin/python --no-deps --editable .
 .venv/bin/fork-microscope doctor
-echo "Ready. See README.md for the Muse smoke test and SSH dashboard connection."
+echo "Ready. Run .venv/bin/fork-microscope serve --port 8767, then open http://127.0.0.1:8767/."

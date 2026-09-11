@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "final_image": "sha256:ae1754cd30c43231732d21d088eace5a3b629d86dd895eae975259fbf311eeee",
+  "checks": [
+    "clean Docker build: 153 application tests and 10 JavaScript tests passed",
+    "76 upstream tests and 203 released hashes passed in Git-free container",
+    "startup model remains unloaded, no sampling job",
+    "unauthenticated API denied",
+    "allowed origin and correct token accepted",
+    "foreign origin denied",
+    "Git config not served",
+    "current frontend CSS included",
+    "static archive manifest verified"
+  ],
+  "test_environment": "CPU only; no GPU weights or cloud resources",
+  "static_archive": "dist/fork-dashboard.zip"
+}

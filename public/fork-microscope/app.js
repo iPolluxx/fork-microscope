@@ -9,7 +9,7 @@ const cache=new Map();
 const config=()=>Object.fromEntries(fields.map(k=>[k,$(k).value.trim()===''?NaN:Number($(k).value)]));
 const compact=n=>n>=1e6?`${(n/1e6).toFixed(2)}M`:n>=1000?`${(n/1000).toFixed(1)}k`:nf.format(n);
 
-async function json(url,options){const r=await fetch(url,options);const value=await r.json();if(!r.ok)throw new Error(value.error||'Could not load the recorded data.');return value;}
+async function json(url,options){const r=await window.workerFetch(url,options);const value=await r.json();if(!r.ok)throw new Error(value.error||'Could not load the recorded data.');return value;}
 async function getMetadata(row){if(!cache.has(row))cache.set(row,await json(`/api/question?row=${row}`));return cache.get(row);}
 function error(message){$('error').textContent=message;$('error').hidden=!message;document.body.classList.toggle('invalid',Boolean(message));}
 function patterns(p){$('first-pattern').textContent=p.first.slice(0,4).join(', ')+(p.first.length>4?'…':'');$('second-pattern').textContent=p.second.slice(0,4).join(', ')+(p.second.length>4?'…':'');}

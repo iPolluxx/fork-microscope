@@ -7,7 +7,24 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
+      # Do not create or publish a public bundled package while upstream permissions are unresolved.
+      - name: Resolve package and verify existing private visibility
+        id: image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"
+          package="${repo#*/}"
+          owner_type=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .owner.type)
+          namespace=users
+          if [ "$owner_type" = Organization ]; then namespace=orgs; fi
+          package_api="${namespace}/${GITHUB_REPOSITORY_OWNER}/packages/container/${package}"
+          visibility=$(gh api "$package_api" --jq .visibility)
+          test "$visibility" = private
+          echo "name=ghcr.io/${repo}" >> "$GITHUB_OUTPUT"
+          echo "package_api=${package_api}" >> "$GITHUB_OUTPUT"
       - name: Free hosted-runner space for CUDA wheels
         run: |
           df -h /
@@ -27,12 +44,14 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/ipolluxx/fork-microscope:${{ github.sha }}
+          tags: ${{ steps.image.outputs.name }}:${{ github.sha }}
           provenance: false
       - name: Verify private package visibility
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_API: ${{ steps.image.outputs.package_api }}
+          IMAGE: ${{ steps.image.outputs.name }}
         run: |
-          visibility=$(gh api users/ipolluxx/packages/container/fork-microscope --jq .visibility)
+          visibility=$(gh api "$PACKAGE_API" --jq .visibility)
           test "$visibility" = private
-          echo "Verified private package: ghcr.io/ipolluxx/fork-microscope:${GITHUB_SHA}"
+          echo "Verified private package: ${IMAGE}:${GITHUB_SHA}"
